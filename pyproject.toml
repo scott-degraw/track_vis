@@ -1,0 +1,28 @@
+[project]
+name = "track_vis"
+version = "0.1.0"
+description = "Plotly-based 3D event display for particle tracks, voxels, and truth vertices"
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "awkward>=2.9.4",
+    "numpy>=2.2.6",
+    "plotly>=6.5.0",
+]
+
+[project.optional-dependencies]
+particle = [
+    "particle>=0.26.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 120
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]
