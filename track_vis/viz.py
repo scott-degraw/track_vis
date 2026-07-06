@@ -2,6 +2,7 @@ import awkward as ak
 import numpy as np
 import plotly.colors as pc
 import plotly.graph_objects as go
+import uproot
 
 try:
     from particle import Particle
@@ -114,22 +115,32 @@ def voxel_mesh(
     )
 
 
-def plot_tracks(tracks, t_min: float, t_max: float) -> list:
+def plot_tracks(
+    pdg: np.ndarray,
+    pos_x: ak.Array,
+    pos_y: ak.Array,
+    pos_z: ak.Array,
+    time: ak.Array,
+    deposited_energy: ak.Array,
+    t_min: float,
+    t_max: float,
+) -> list:
     traces = []
     t_range = t_max - t_min or 1.0
-    for track in tracks:
-        steps = track["steps"]
-        pos = ak.to_numpy(steps["position"])
-        t = ak.to_numpy(steps["time"])
-        dep_step = ak.to_numpy(steps["deposited_energy"])
-        dep_total = float(ak.sum(steps["deposited_energy"]))
-        name = particle_name(int(track["pdg"]))
+    for i in range(len(pdg)):
+        x = ak.to_numpy(pos_x[i])
+        y = ak.to_numpy(pos_y[i])
+        z = ak.to_numpy(pos_z[i])
+        t = ak.to_numpy(time[i])
+        dep_step = ak.to_numpy(deposited_energy[i])
+        dep_total = float(dep_step.sum())
+        name = particle_name(int(pdg[i]))
         colors = pc.sample_colorscale(COLORSCALE, (t - t_min) / t_range)
         traces.append(
             go.Scatter3d(
-                x=pos[:, 0],
-                y=pos[:, 1],
-                z=pos[:, 2],
+                x=x,
+                y=y,
+                z=z,
                 mode="lines",
                 name=f"{name} ({dep_total:.2f} MeV dep.)",
                 line=dict(width=6, color=colors),
@@ -140,16 +151,23 @@ def plot_tracks(tracks, t_min: float, t_max: float) -> list:
     return traces
 
 
-def plot_voxels(tracks, voxel_size: float = 100.0) -> list:
+def plot_voxels(
+    pos_x: ak.Array,
+    pos_y: ak.Array,
+    pos_z: ak.Array,
+    deposited_energy: ak.Array,
+    voxel_size: float = 100.0,
+) -> list:
     voxel_energy: dict[tuple, float] = {}
-    for track in tracks:
-        steps = track["steps"]
-        pos = ak.to_numpy(steps["position"])
-        dep = ak.to_numpy(steps["deposited_energy"])
-        for p, d in zip(pos, dep):
+    for i in range(len(pos_x)):
+        x = ak.to_numpy(pos_x[i])
+        y = ak.to_numpy(pos_y[i])
+        z = ak.to_numpy(pos_z[i])
+        dep = ak.to_numpy(deposited_energy[i])
+        for px, py, pz, d in zip(x, y, z, dep):
             if d <= 0:
                 continue
-            key = tuple((p // voxel_size).astype(int))
+            key = (int(px // voxel_size), int(py // voxel_size), int(pz // voxel_size))
             voxel_energy[key] = voxel_energy.get(key, 0.0) + d
 
     if not voxel_energy:
@@ -172,11 +190,20 @@ def plot_voxels(tracks, voxel_size: float = 100.0) -> list:
     ]
 
 
-def plot_truth_vertices(vertices, t_min: float, t_max: float) -> list:
-    pos = ak.to_numpy(vertices["position"])
-    t = ak.to_numpy(vertices["time"])
-    energy = ak.to_numpy(vertices["energy"])
-    pdgs = ak.to_numpy(vertices["pdg"])
+def plot_truth_vertices(
+    pdg: np.ndarray,
+    x: np.ndarray,
+    y: np.ndarray,
+    z: np.ndarray,
+    t: np.ndarray,
+    energy: np.ndarray,
+    t_min: float,
+    t_max: float,
+) -> list:
+    pos = np.stack([ak.to_numpy(x), ak.to_numpy(y), ak.to_numpy(z)], axis=-1)
+    t = ak.to_numpy(t)
+    energy = ak.to_numpy(energy)
+    pdgs = ak.to_numpy(pdg)
 
     by_species: dict[str, list[int]] = {}
     for i, pdg in enumerate(pdgs):
@@ -210,3 +237,44 @@ def plot_truth_vertices(vertices, t_min: float, t_max: float) -> list:
             )
         )
     return traces
+
+
+def load_event(path: str, index: int) -> tuple[dict, dict]:
+    """Read one event from an imaging_reco ntuple; returns (tracks, vertices) kwargs dicts."""
+    tree = uproot.open(path)["output"]
+    event = tree.arrays(
+        [
+            "trackPDG",
+            "trackPosX",
+            "trackPosY",
+            "trackPosZ",
+            "trackTime",
+            "trackDep",
+            "mcpdgs",
+            "mcxs",
+            "mcys",
+            "mczs",
+            "mcts",
+            "mckes",
+        ],
+        entry_start=index,
+        entry_stop=index + 1,
+    )[0]
+
+    tracks = {
+        "pdg": event["trackPDG"],
+        "pos_x": event["trackPosX"],
+        "pos_y": event["trackPosY"],
+        "pos_z": event["trackPosZ"],
+        "time": event["trackTime"],
+        "deposited_energy": event["trackDep"],
+    }
+    vertices = {
+        "pdg": event["mcpdgs"],
+        "x": event["mcxs"],
+        "y": event["mcys"],
+        "z": event["mczs"],
+        "t": event["mcts"],
+        "energy": event["mckes"],
+    }
+    return tracks, vertices

@@ -8,6 +8,7 @@ dependencies = [
     "awkward>=2.9.4",
     "numpy>=2.2.6",
     "plotly>=6.5.0",
+    "uproot>=5.7.5",
 ]
 
 [project.optional-dependencies]
@@ -25,4 +26,7 @@ line-length = 120
 [dependency-groups]
 dev = [
     "pytest>=9.0.3",
+    "jupyter>=1.1.1",
+    "pre-commit>=4.0.1",
+    "nbstripout>=0.8.1",
 ]

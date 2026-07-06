@@ -1,6 +1,7 @@
 from track_vis.viz import (
     COLORSCALE,
     VOXEL_COLORSCALE,
+    load_event,
     particle_name,
     plot_tracks,
     plot_truth_vertices,
@@ -12,6 +13,7 @@ from track_vis.viz import (
 __all__ = [
     "COLORSCALE",
     "VOXEL_COLORSCALE",
+    "load_event",
     "particle_name",
     "plot_tracks",
     "plot_truth_vertices",
