@@ -3,7 +3,7 @@ name = "track_vis"
 version = "0.1.0"
 description = "Plotly-based 3D event display for particle tracks, voxels, and truth vertices"
 readme = "README.md"
-requires-python = ">=3.13,<3.14"
+requires-python = ">=3.10"
 dependencies = [
     "awkward>=2.9.4",
     "numpy>=2.2.6",
