@@ -115,6 +115,105 @@ def voxel_mesh(
     )
 
 
+def voxel_cubes(
+    centers: np.ndarray,
+    energies: np.ndarray,
+    voxel_size: float,
+    e_max: float | None = None,
+    threshold: float = 0.05,
+    n_levels: int = 8,
+    opacity_range: tuple[float, float] = (0.05, 0.6),
+    gamma: float = 1.0,
+    colorscale: str = VOXEL_COLORSCALE,
+    colorbar_title: str = "Energy (MeV)",
+    colorbar_x: float = 1.12,
+    fill: float = 0.92,
+    name: str = "Voxels",
+    hover_texts: np.ndarray | None = None,
+) -> list:
+    """Return voxel cubes whose opacity and colour both encode energy.
+
+    Plotly only supports one opacity per trace, so voxels are grouped into
+    *n_levels* equal-width bins of ``energies / e_max`` and each bin becomes one
+    batched ``go.Mesh3d`` with its own opacity. Opacity of level k (bin centre
+    u_k in (0, 1]) is ``o_min + (o_max - o_min) * u_k ** gamma``, so faint
+    voxels are near-transparent and the hottest are near-solid. Colour uses
+    the same energy on a shared ``[0, e_max]`` scale, so the colourbar reads
+    off directly and the two cues agree.
+
+    Parameters
+    ----------
+    centers:
+        (N, 3) voxel centre positions (mm).
+    energies:
+        (N,) per-voxel energy, e.g. reconstructed quenched energy (MeV).
+    voxel_size:
+        Cube edge length (mm).
+    e_max:
+        Top of the colour/opacity scale; defaults to ``energies.max()``. Pass
+        a common value to compare several events on the same scale.
+    threshold:
+        Voxels below ``threshold * e_max`` are dropped (MLEM leaves a low-level
+        haze over the whole grid that would otherwise fog the view).
+    n_levels:
+        Number of opacity levels (one trace each). 6-10 reads well.
+    opacity_range:
+        (min, max) opacity for the lowest and highest level.
+    gamma:
+        Opacity curve; >1 fades low-energy voxels more strongly.
+    fill:
+        Fraction of the voxel pitch each cube is drawn at, leaving small gaps
+        so neighbouring cubes stay distinguishable.
+    """
+    centers = np.asarray(centers, dtype=float)
+    energies = np.asarray(energies, dtype=float)
+    if e_max is None:
+        e_max = float(energies.max()) if len(energies) else 0.0
+    if e_max <= 0:
+        return []
+
+    keep = energies >= threshold * e_max
+    centers, energies = centers[keep], energies[keep]
+    if hover_texts is not None:
+        hover_texts = np.asarray(hover_texts)[keep]
+
+    u = np.clip(energies / e_max, 0.0, 1.0)
+    level = np.minimum((u * n_levels).astype(int), n_levels - 1)
+    o_min, o_max = opacity_range
+
+    traces = []
+    for k in range(n_levels):
+        sel = level == k
+        if not sel.any():
+            continue
+        u_k = (k + 0.5) / n_levels
+        mesh = voxel_mesh(
+            centers=centers[sel],
+            energies=energies[sel],
+            voxel_size=voxel_size * fill,
+            e_max=e_max,
+            colorscale=colorscale,
+            colorbar_title=colorbar_title,
+            colorbar_x=colorbar_x,
+            opacity=o_min + (o_max - o_min) * u_k**gamma,
+            name=name,
+            hover_texts=hover_texts[sel] if hover_texts is not None else None,
+        )
+        mesh.update(
+            showscale=False,
+            flatshading=True,
+            lighting={"ambient": 0.8, "diffuse": 0.3, "specular": 0.0},
+            legendgroup=name,
+            showlegend=False,
+        )
+        traces.append(mesh)
+
+    if traces:
+        # One colourbar and one legend entry for the whole group.
+        traces[-1].update(showscale=True, showlegend=True)
+    return traces
+
+
 def plot_tracks(
     pdg: np.ndarray,
     pos_x: ak.Array,
@@ -178,16 +277,15 @@ def plot_voxels(
     energies = np.array(list(voxel_energy.values()))
     hover_texts = np.array([f"dep={e:.4f} MeV" for e in energies])
 
-    return [
-        voxel_mesh(
-            centers=centers,
-            energies=energies,
-            voxel_size=voxel_size,
-            colorbar_title="Voxel dep. energy (MeV)",
-            name=f"Voxels ({voxel_size:.0f} mm)",
-            hover_texts=hover_texts,
-        )
-    ]
+    return voxel_cubes(
+        centers=centers,
+        energies=energies,
+        voxel_size=voxel_size,
+        threshold=0.0,
+        colorbar_title="Voxel dep. energy (MeV)",
+        name=f"Voxels ({voxel_size:.0f} mm)",
+        hover_texts=hover_texts,
+    )
 
 
 def plot_truth_vertices(
