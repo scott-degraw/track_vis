@@ -50,9 +50,14 @@ def _colors(values, vmin, vmax, colorscale, color: str, n: int) -> np.ndarray:
     if values is None:
         return np.tile(hex_to_rgb(color), (n, 1))
     values = np.asarray(values, dtype=float)
-    lo = float(values.min()) if vmin is None else vmin
-    hi = float(values.max()) if vmax is None else vmax
+    lo, hi = _value_range(values, vmin, vmax)
     return sample_colorscale(colorscale, (values - lo) / ((hi - lo) or 1.0))
+
+
+def _value_range(values, vmin, vmax) -> tuple[float, float]:
+    """Return (vmin, vmax), each defaulting to the min or max of `values`."""
+    values = np.asarray(values, dtype=float)
+    return (float(values.min()) if vmin is None else vmin, float(values.max()) if vmax is None else vmax)
 
 
 def _is_single_path(points) -> bool:
@@ -450,7 +455,7 @@ class EventDisplay:
                 width=width,
                 hover_text=texts,
             )
-        self._time_colorbar(t_min, t_max, colorscale)
+        self._set_colorbar(TIME_COLORBAR_TITLE, colorscale, t_min, t_max)
         return self
 
     # ------------------------------------------------------------------ markers
@@ -466,6 +471,7 @@ class EventDisplay:
         color: str = "#1f77b4",
         size: float = 12.0,
         hover_text: list[str] | None = None,
+        colorbar_title: str | None = None,
         visible: bool = True,
     ) -> EventDisplay:
         """
@@ -492,6 +498,9 @@ class EventDisplay:
             Marker diameter in pixels. Default is 12.0.
         hover_text : list of str, optional
             One hover string per marker.
+        colorbar_title : str, optional
+            With `values`, also show a colour bar with this title (a later
+            bar with the same title replaces it). Default is None, no bar.
         visible : bool, optional
             Whether the layer starts visible. Default is True.
 
@@ -513,6 +522,9 @@ class EventDisplay:
         self.scene.points.append(
             PointLayer(name=name, positions=pts, colors=rgb, size=size, hover_text=text, visible=visible)
         )
+        if values is not None and colorbar_title is not None:
+            lo, hi = _value_range(values, vmin, vmax)
+            self._set_colorbar(colorbar_title, colorscale, lo, hi)
         return self
 
     def add_vertices(
@@ -574,13 +586,13 @@ class EventDisplay:
                 size=size,
                 hover_text=[f"E = {energy[i]:.3f} MeV, t = {t[i]:.2f} ns" for i in idx],
             )
-        self._time_colorbar(t_min, t_max, colorscale)
+        self._set_colorbar(TIME_COLORBAR_TITLE, colorscale, t_min, t_max)
         return self
 
-    def _time_colorbar(self, t_min: float, t_max: float, colorscale) -> None:
-        """Set the shared time colour bar, replacing any earlier one."""
-        bar = Colorbar(TIME_COLORBAR_TITLE, colorscale_stops(colorscale), t_min, t_max)
-        self.scene.colorbars = [b for b in self.scene.colorbars if b.title != TIME_COLORBAR_TITLE] + [bar]
+    def _set_colorbar(self, title: str, colorscale, vmin: float, vmax: float) -> None:
+        """Add a colour bar, replacing any earlier one with the same title."""
+        bar = Colorbar(title, colorscale_stops(colorscale), vmin, vmax)
+        self.scene.colorbars = [b for b in self.scene.colorbars if b.title != title] + [bar]
 
     # ------------------------------------------------------------------ output
     def to_html(self, lib: str = "cdn") -> str:

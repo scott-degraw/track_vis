@@ -70,7 +70,7 @@ per vertex. Units: mm, ns, MeV.
 | `.add_deposits(pos_x, pos_y, pos_z, deposited_energy, voxel_size=100)` | Bins per-step deposits into cubes aligned to multiples of `voxel_size` and adds them as a volume. |
 | `.add_volume(grid, origin, voxel_size)` or `.add_volume(centers=, energies=, voxel_size=)` | A voxel image, ray-marched on the GPU. `e_max` fixes the colour/opacity scale for comparing events. |
 | `.add_line(points, name, color= / values=, dashed=, width=)` | A polyline (or a list of them in one layer), in one colour or coloured by per-point values. |
-| `.add_points(points, name, color= / values=, size=)` | Round markers. |
+| `.add_points(points, name, color= / values=, size=, colorbar_title=)` | Round markers; with `values` and `colorbar_title` they get their own colour bar. |
 | `.to_html(lib="cdn")`, `.write_html(path, lib="inline")` | HTML output. `lib="cdn"` loads three.js r147 from a pinned jsDelivr URL; `lib="inline"` embeds the copy vendored in `track_vis/js/vendor` (MIT). |
 | `.scene` | The `Scene` built so far: plain dataclasses of NumPy arrays (see `scene.py`). |
 | `DisplayMenu(displays, labels)` | Several displays in one view with a drop-down to pick one (e.g. one per event). Only the shown one holds a WebGL context. Same `to_html`/`write_html`. |

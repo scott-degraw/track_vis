@@ -76,3 +76,10 @@ def test_menu_labels_default_to_titles():
         DisplayMenu([EventDisplay()], labels=["a", "b"])
     with pytest.raises(ValueError):
         DisplayMenu([])
+
+
+def test_points_colorbar():
+    d = EventDisplay().add_points([[0, 0, 0], [1, 1, 1]], values=[3.0, 7.0], colorbar_title="First hit (ns)")
+    (bar,) = d.scene.colorbars
+    assert (bar.title, bar.vmin, bar.vmax) == ("First hit (ns)", 3.0, 7.0)
+    assert not EventDisplay().add_points([[0, 0, 0]], values=[1.0]).scene.colorbars
