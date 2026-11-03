@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.1
+
+- Fix: displays drew nothing ("THREE is not defined") on pages with an AMD
+  loader such as require.js, which Quarto and Jupyter load. three.js now loads
+  with the loader's `define` hidden, so it always sets `window.THREE`.
+
 ## 0.2.0
 
 A rewrite on three.js. **Breaking:** the Plotly functions are gone.

@@ -49,6 +49,17 @@ def _script(code: str, once_key: str | None = None) -> str:
     return f"<script>{code}</script>"
 
 
+def _hide_amd(code: str) -> str:
+    """
+    Run vendored three.js code with no AMD ``define`` in scope.
+
+    three.min.js is a UMD build: on pages with an AMD loader (require.js, which
+    Jupyter and Quarto pages load) it would register as a module instead of
+    setting ``window.THREE``, which the renderer reads.
+    """
+    return f"(function (define) {{\n{code}\n}})();"
+
+
 def _to_script_json(value) -> str:
     """Serialise to JSON that is safe inside <script> (``</`` cannot end the tag)."""
     return json.dumps(value, separators=(",", ":")).replace("</", "<\\/")
@@ -113,7 +124,7 @@ def menu_html(scenes: list[Scene], labels: list[str], lib: str = "cdn") -> str:
 def _fragment(mount_function: str, mount_args: list, height: int, lib: str) -> str:
     """Scripts, a view div and ``TrackVis.<mount_function>(div_id, *mount_args, urls)``."""
     if lib == "inline":
-        parts = [_script(_read_js(f"vendor/{name}"), once_key=name) for name, _ in THREE_FILES]
+        parts = [_script(_hide_amd(_read_js(f"vendor/{name}")), once_key=name) for name, _ in THREE_FILES]
         urls = None
     elif lib == "cdn":
         parts = []

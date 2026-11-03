@@ -12,11 +12,13 @@ specific Chromium executable.
 """
 
 import os
+from pathlib import Path
 
 import numpy as np
 import pytest
 
 from track_vis import DisplayMenu, EventDisplay
+from track_vis.browser import page
 
 REQUIRE = os.environ.get("TRACK_VIS_REQUIRE_BROWSER") == "1"
 SOFTWARE_GL = ["--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader"]
@@ -103,3 +105,35 @@ def test_menu_switches_scenes(browser, tmp_path, tracks, vertices):
     assert page.locator(".track-vis canvas").count() == 1  # the first view was disposed
     assert errors == []
     page.close()
+
+
+# What an AMD loader such as require.js (which Quarto and Jupyter pages load) leaves on
+# the page: three.js's UMD build would register with it instead of setting window.THREE.
+FAKE_AMD_LOADER = "<script>window.define = function () {}; window.define.amd = {};</script>"
+VENDOR = Path(__file__).resolve().parent.parent / "track_vis" / "js" / "vendor"
+
+
+@pytest.mark.parametrize("lib", ["inline", "cdn"])
+def test_renders_next_to_an_amd_loader(browser, tmp_path, tracks, lib):
+    path = tmp_path / "amd.html"
+    path.write_text(page(FAKE_AMD_LOADER + EventDisplay().add_tracks(**tracks).to_html(lib=lib)))
+
+    page_ = browser.new_page()
+    # Serve the pinned CDN URLs from the vendored copies, so the test needs no network.
+    page_.route(
+        "https://cdn.jsdelivr.net/**",
+        lambda route: route.fulfill(
+            content_type="text/javascript", body=(VENDOR / route.request.url.rsplit("/", 1)[-1]).read_text()
+        ),
+    )
+    errors = []
+    page_.on("pageerror", lambda e: errors.append(str(e)))
+    page_.goto(path.as_uri())
+    page_.wait_for_function(
+        "document.querySelector('.track-vis')?._trackvis !== undefined"
+        " || document.querySelector('.track-vis')?.textContent.startsWith('track_vis:')",
+        timeout=15000,
+    )
+    assert page_.locator(".track-vis").inner_text().startswith("track_vis:") is False
+    assert errors == []
+    page_.close()

@@ -629,15 +629,23 @@
 
   let scriptsLoaded = null;  // one shared load per page
 
+  // three.min.js is a UMD build: with an AMD loader on the page (require.js, which
+  // Jupyter and Quarto pages load) it would register as a module instead of setting
+  // window.THREE, so the loader's define is hidden until the scripts have run.
   function loadScripts(urls) {
     if (!urls) return Promise.resolve();
-    scriptsLoaded = scriptsLoaded || urls.reduce((prev, url) => prev.then(() => new Promise((resolve, reject) => {
-      const s = document.createElement("script");
-      s.src = url;
-      s.onload = resolve;
-      s.onerror = () => reject(new Error(`could not load ${url}`));
-      document.head.appendChild(s);
-    })), Promise.resolve());
+    if (!scriptsLoaded) {
+      const define = window.define;
+      window.define = undefined;
+      scriptsLoaded = urls.reduce((prev, url) => prev.then(() => new Promise((resolve, reject) => {
+        const s = document.createElement("script");
+        s.src = url;
+        s.onload = resolve;
+        s.onerror = () => reject(new Error(`could not load ${url}`));
+        document.head.appendChild(s);
+      })), Promise.resolve());
+      scriptsLoaded.finally(() => { window.define = define; });
+    }
     return scriptsLoaded;
   }
 
