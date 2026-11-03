@@ -1,8 +1,9 @@
-// track_vis volume viewer: ray-marched voxel image + polyline tracks in three.js.
-// Expects THREE (r147 classic build) with OrbitControls and Line2 on window.
-// Entry point: TrackVisVolume.render(containerElement, spec). See track_vis/volume.py.
+// track_vis event display: ray-marched voxel volumes, polylines and markers in three.js.
+// Expects THREE (r147 classic build) with OrbitControls and LineSegments2 on window.
+// Entry point: TrackVis.render(containerElement, spec). The spec is built by
+// track_vis/display.py (EventDisplay).
 (function () {
-  if (window.TrackVisVolume) return;
+  if (window.TrackVis) return;
 
   const VERT = `
     out vec3 vOrigin;
@@ -158,81 +159,143 @@
     return e;
   }
 
+  function b64ToFloats(s) {
+    const b = b64ToBytes(s);
+    return new Float32Array(b.buffer, b.byteOffset, b.byteLength / 4);
+  }
+
+  const POINT_VERT = `
+    attribute vec3 color;
+    uniform float size;
+    varying vec3 vColor;
+    void main() {
+      vColor = color;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      gl_PointSize = size;
+    }`;
+  const POINT_FRAG = `
+    varying vec3 vColor;
+    void main() {
+      float r = length(gl_PointCoord - 0.5) * 2.0;
+      if (r > 1.0) discard;
+      gl_FragColor = vec4(r > 0.72 ? vec3(0.1) : vColor, 1.0);
+    }`;
+
   function render(root, spec) {
     const W = spec.width, H = spec.height;
     root.style.cssText += `position:relative;width:100%;max-width:${W}px;height:${H}px;` +
       "font:12px system-ui,-apple-system,Segoe UI,sans-serif;color:#222;background:#fff;border:1px solid #ddd;border-radius:4px;overflow:hidden;";
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+    renderer.setPixelRatio(pixelRatio);
     renderer.setClearColor(0xffffff, 1);
     root.appendChild(renderer.domElement);
     renderer.domElement.style.display = "block";
 
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(35, 1, 1, 1e6);
+    const camera = new THREE.PerspectiveCamera(35, 1, 1, 1e7);
     camera.up.set(0, 0, 1);  // must precede OrbitControls, which caches the up axis
     const controls = new THREE.OrbitControls(camera, renderer.domElement);
     controls.enableDamping = false;
 
-    // ---- volume ----
-    const v = spec.volume;
-    const [nx, ny, nz] = v.shape;
-    const tex = new THREE.Data3DTexture(b64ToBytes(v.data), nx, ny, nz);
-    tex.format = THREE.RedFormat;
-    tex.type = THREE.UnsignedByteType;
-    tex.unpackAlignment = 1;
-    tex.minFilter = tex.magFilter = spec.smooth ? THREE.LinearFilter : THREE.NearestFilter;
-    tex.needsUpdate = true;
+    const bounds = new THREE.Box3();
+    const layers = [];  // {name, objects: [Object3D], visible, hover?}
+    const style = spec.volume_style;
 
-    const size = new THREE.Vector3(nx, ny, nz).multiplyScalar(v.voxel_size);
-    const centre = new THREE.Vector3(...v.origin).addScaledVector(size, 0.5);
-    const uniforms = {
-      map: { value: tex },
-      cmap: { value: cmapTexture(spec.colorscale) },
-      shape: { value: new THREE.Vector3(nx, ny, nz) },
-      thresh: { value: spec.threshold },
-      density: { value: spec.density },
-      gamma: { value: spec.gamma },
+    // ---- volumes (shared style uniforms, one texture each) ----
+    const shared = {
+      thresh: { value: style.threshold },
+      density: { value: style.density },
+      gamma: { value: style.gamma },
       mode: { value: 0 },
-      sharp: { value: !spec.smooth },
+      sharp: { value: !style.smooth },
     };
-    const mat = new THREE.ShaderMaterial({
-      glslVersion: THREE.GLSL3, uniforms, vertexShader: VERT, fragmentShader: FRAG,
-      side: THREE.BackSide, transparent: true, premultipliedAlpha: true, depthWrite: false,
+    const volumes = spec.volumes.map((v) => {
+      const [nx, ny, nz] = v.shape;
+      const raw = b64ToBytes(v.data);
+      const tex = new THREE.Data3DTexture(raw, nx, ny, nz);
+      tex.format = THREE.RedFormat;
+      tex.type = THREE.UnsignedByteType;
+      tex.unpackAlignment = 1;
+      tex.minFilter = tex.magFilter = style.smooth ? THREE.LinearFilter : THREE.NearestFilter;
+      tex.needsUpdate = true;
+      const size = new THREE.Vector3(nx, ny, nz).multiplyScalar(v.voxel_size);
+      const lo = new THREE.Vector3(...v.origin);
+      const box3 = new THREE.Box3(lo.clone(), lo.clone().add(size));
+      bounds.union(box3);
+      const mat = new THREE.ShaderMaterial({
+        glslVersion: THREE.GLSL3,
+        uniforms: {
+          ...shared,
+          map: { value: tex },
+          cmap: { value: cmapTexture(v.colorscale) },
+          shape: { value: new THREE.Vector3(nx, ny, nz) },
+        },
+        vertexShader: VERT, fragmentShader: FRAG,
+        side: THREE.BackSide, transparent: true, premultipliedAlpha: true, depthWrite: false,
+      });
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), mat);
+      mesh.scale.copy(size);
+      box3.getCenter(mesh.position);
+      mesh.renderOrder = 10;
+      scene.add(mesh);
+      const vol = { spec: v, raw, tex, box3, mesh, visible: v.visible };
+      layers.push({ name: v.name, objects: [mesh], visible: v.visible, volume: vol });
+      return vol;
     });
-    const box = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), mat);
-    box.scale.copy(size);
-    box.position.copy(centre);
-    box.renderOrder = 10;
-    scene.add(box);
 
-    const outline = new THREE.Box3Helper(new THREE.Box3().setFromCenterAndSize(centre, size), 0xbbbbbb);
-    scene.add(outline);
-
-    // ---- tracks ----
+    // ---- polylines (one LineSegments2 per layer) ----
     const lineMats = [];
-    const trackObjs = [];
-    for (const tr of spec.tracks) {
-      const geo = new THREE.LineGeometry();
-      geo.setPositions(tr.points.flat());
-      geo.setColors(tr.colors.flat());
-      const lm = new THREE.LineMaterial({ linewidth: tr.width, vertexColors: true, dashed: !!tr.dashed, dashSize: 20, gapSize: 12 });
-      const line = new THREE.Line2(geo, lm);
-      if (tr.dashed) line.computeLineDistances();
-      line.renderOrder = 0;
-      scene.add(line);
+    for (const ln of spec.lines) {
+      const pos = b64ToFloats(ln.segments);
+      const geo = new THREE.LineSegmentsGeometry();
+      geo.setPositions(pos);
+      geo.setColors(b64ToFloats(ln.colors));
+      const lm = new THREE.LineMaterial({ linewidth: ln.width, vertexColors: true, dashed: !!ln.dashed, dashSize: ln.dash, gapSize: 0.6 * ln.dash });
+      const obj = new THREE.LineSegments2(geo, lm);
+      if (ln.dashed) obj.computeLineDistances();
+      scene.add(obj);
       lineMats.push(lm);
-      trackObjs.push(line);
+      for (let i = 0; i < pos.length; i += 3) bounds.expandByPoint(new THREE.Vector3(pos[i], pos[i + 1], pos[i + 2]));
+      layers.push({ name: ln.name, objects: [obj], visible: ln.visible, hover: ln.hover && { pos: b64ToFloats(ln.hover.points), text: ln.hover.text } });
     }
+
+    // ---- markers ----
+    for (const pt of spec.points) {
+      const pos = b64ToFloats(pt.positions);
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+      geo.setAttribute("color", new THREE.BufferAttribute(b64ToFloats(pt.colors), 3));
+      const mat = new THREE.ShaderMaterial({ uniforms: { size: { value: pt.size * pixelRatio } }, vertexShader: POINT_VERT, fragmentShader: POINT_FRAG });
+      const obj = new THREE.Points(geo, mat);
+      scene.add(obj);
+      for (let i = 0; i < pos.length; i += 3) bounds.expandByPoint(new THREE.Vector3(pos[i], pos[i + 1], pos[i + 2]));
+      layers.push({ name: pt.name, objects: [obj], visible: pt.visible, hover: { pos, text: pt.hover } });
+    }
+
+    if (bounds.isEmpty()) bounds.set(new THREE.Vector3(-500, -500, -500), new THREE.Vector3(500, 500, 500));
+    // Pad line/marker-only extents so content does not sit on the box edges.
+    {
+      const s = bounds.getSize(new THREE.Vector3());
+      const pad = Math.max(s.x, s.y, s.z) * 0.04 + 1;
+      if (!volumes.length) bounds.expandByScalar(pad);
+    }
+    const lo = bounds.min.clone(), hi = bounds.max.clone();
+    const size = bounds.getSize(new THREE.Vector3());
+    const centre = bounds.getCenter(new THREE.Vector3());
+    scene.add(new THREE.Box3Helper(bounds.clone(), 0xc8c8c8));
 
     // ---- ticked axes along three edges of the bounding box ----
     // x runs along (y=lo, z=lo), y along (x=hi, z=lo), z along (x=lo, y=lo).
-    const lo = new THREE.Vector3(...v.origin);
-    const hi = lo.clone().add(size);
     const span = Math.max(size.x, size.y, size.z);
-    const step = [50, 100, 200, 250, 500, 1000, 2000, 5000].find((s) => span / s <= 8) || 10000;
-    const tickLen = Math.max(0.02 * span, 0.3 * v.voxel_size);
+    const nice = [1, 2, 2.5, 5];
+    let step = 1;
+    outer: for (let e = Math.floor(Math.log10(span / 8)) - 1; e < 12; e++) {
+      for (const m of nice) { step = m * 10 ** e; if (span / step <= 8) break outer; }
+    }
+    const tickLen = 0.02 * span;
+    const fmt = (t) => String(+t.toPrecision(10));
     // Labels are placed in screen space each frame: pushed out from the box,
     // perpendicular to the projected axis, by their own size plus a margin.
     const axesInfo = [];
@@ -248,11 +311,12 @@
       const at = (val) => new THREE.Vector3(...ax.base.map((b, i) => (i === k ? val : b)));
       const info = { p0: at(lo.getComponent(k)), p1: at(hi.getComponent(k)), ticks: [] };
       const pts = [info.p0, info.p1];
-      for (let t = Math.ceil(lo.getComponent(k) / step) * step; t <= hi.getComponent(k) + 1e-6; t += step) {
+      for (let i = Math.ceil(lo.getComponent(k) / step - 1e-9); i * step <= hi.getComponent(k) + 1e-9 * span; i++) {
+        const t = i * step;
         const p = at(t);
         const tip = p.clone().addScaledVector(out, tickLen);
         pts.push(p, tip);
-        const lab = el("div", "position:absolute;font-size:11px;color:#444;white-space:nowrap;font-variant-numeric:tabular-nums", String(Math.round(t)));
+        const lab = el("div", "position:absolute;font-size:11px;color:#444;white-space:nowrap;font-variant-numeric:tabular-nums", fmt(t));
         labelLayer.appendChild(lab);
         info.ticks.push({ p, tip, lab });
       }
@@ -281,7 +345,7 @@
       const c = scr(centre, w, h);
       for (const ax of axesInfo) {
         const a = scr(ax.p0, w, h), b = scr(ax.p1, w, h);
-        let dx = b.x - a.x, dy = b.y - a.y;
+        const dx = b.x - a.x, dy = b.y - a.y;
         const L = Math.hypot(dx, dy) || 1;
         let n = { x: -dy / L, y: dx / L };
         const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
@@ -302,7 +366,6 @@
 
     // ---- camera ----
     const radius = size.length() * 0.5;
-    controls.target.copy(centre);
     const resetCamera = () => {
       camera.position.copy(centre).add(new THREE.Vector3(1.0, -1.4, 0.8).normalize().multiplyScalar(radius * 3.9));
       controls.target.copy(centre);
@@ -311,13 +374,13 @@
     resetCamera();
 
     // ---- overlay UI ----
-    const ui = el("div", "position:absolute;left:8px;top:8px;background:rgba(255,255,255,.88);padding:6px 8px;border-radius:4px;line-height:1.7;box-shadow:0 1px 3px rgba(0,0,0,.15)");
-    if (spec.title) ui.appendChild(el("div", "font-weight:600", spec.title));
-    const slider = (label, min, max, step, val, fn) => {
+    const ui = el("div", "position:absolute;left:8px;top:8px;max-height:calc(100% - 40px);overflow:auto;background:rgba(255,255,255,.88);padding:6px 8px;border-radius:4px;line-height:1.7;box-shadow:0 1px 3px rgba(0,0,0,.15)");
+    if (spec.title) ui.appendChild(el("div", "font-weight:600;max-width:260px", spec.title));
+    const slider = (label, min, max, stp, val, fn) => {
       const row = el("label", "display:flex;align-items:center;gap:6px");
       row.appendChild(el("span", "width:62px", label));
       const s = el("input", "width:110px");
-      Object.assign(s, { type: "range", min, max, step, value: val });
+      Object.assign(s, { type: "range", min, max, step: stp, value: val });
       const out = el("span", "width:42px;text-align:right;font-variant-numeric:tabular-nums");
       const upd = () => { out.textContent = fn(parseFloat(s.value)); draw(); };
       s.addEventListener("input", upd);
@@ -334,69 +397,120 @@
       ui.appendChild(row);
       fn(val);
     };
-    const inits = [
-      slider("threshold", 0, 0.6, 0.01, spec.threshold, (x) => { uniforms.thresh.value = x; return x.toFixed(2); }),
-      slider("density", 0.05, 6, 0.05, spec.density, (x) => { uniforms.density.value = x; return x.toFixed(2); }),
-      slider("gamma", 0.3, 3, 0.05, spec.gamma, (x) => { uniforms.gamma.value = x; return x.toFixed(2); }),
-    ];
-    check("smooth (trilinear)", !!spec.smooth, (on) => {
-      tex.minFilter = tex.magFilter = on ? THREE.LinearFilter : THREE.NearestFilter;
-      tex.needsUpdate = true;
-      uniforms.sharp.value = !on;
-    });
-    check("max-intensity projection", false, (on) => { uniforms.mode.value = on ? 1 : 0; });
-    spec.tracks.forEach((tr, i) => check(tr.name, tr.visible, (on) => { trackObjs[i].visible = on; }));
+    const inits = [];
+    if (volumes.length) {
+      inits.push(
+        slider("threshold", 0, 0.6, 0.01, style.threshold, (x) => { shared.thresh.value = x; return x.toFixed(2); }),
+        slider("density", 0.05, 6, 0.05, style.density, (x) => { shared.density.value = x; return x.toFixed(2); }),
+        slider("gamma", 0.3, 3, 0.05, style.gamma, (x) => { shared.gamma.value = x; return x.toFixed(2); }),
+      );
+      check("smooth (trilinear)", !!style.smooth, (on) => {
+        for (const v of volumes) {
+          v.tex.minFilter = v.tex.magFilter = on ? THREE.LinearFilter : THREE.NearestFilter;
+          v.tex.needsUpdate = true;
+        }
+        shared.sharp.value = !on;
+      });
+      check("max-intensity projection", false, (on) => { shared.mode.value = on ? 1 : 0; });
+    }
+    for (const L of layers) {
+      check(L.name, L.visible, (on) => {
+        L.visible = on;
+        for (const o of L.objects) o.visible = on;
+      });
+    }
     const reset = el("button", "margin-top:2px;font:inherit;padding:1px 8px;cursor:pointer", "reset view");
     reset.addEventListener("click", () => { resetCamera(); draw(); });
     ui.appendChild(reset);
     root.appendChild(ui);
 
-    // colour bar
-    const cb = el("div", "position:absolute;right:12px;top:40px;bottom:40px;width:46px;display:flex;flex-direction:column;align-items:flex-start");
-    cb.appendChild(el("div", "position:absolute;top:-24px;right:0;white-space:nowrap", spec.colorbar_title));
-    const bar = el("div", `position:absolute;left:0;top:0;bottom:0;width:12px;border:1px solid #999;background:${cssGradient(spec.colorscale)}`);
-    cb.appendChild(bar);
-    for (let i = 0; i <= 4; i++) {
-      const f = i / 4;
-      cb.appendChild(el("div", `position:absolute;left:16px;bottom:calc(${100 * f}% - 7px);font-variant-numeric:tabular-nums`, (f * spec.e_max).toPrecision(2)));
-    }
-    root.appendChild(cb);
+    // ---- colour bars, right to left ----
+    const bars = spec.volumes.map((v) => ({ title: v.colorbar_title, stops: v.colorscale, min: 0, max: v.e_max }))
+      .concat(spec.colorbars);
+    bars.forEach((b, i) => {
+      const cb = el("div", `position:absolute;right:${12 + i * 78}px;top:64px;bottom:40px;width:56px`);
+      cb.appendChild(el("div", "position:absolute;bottom:calc(100% + 6px);left:0;width:70px;white-space:normal;line-height:1.15", b.title));
+      cb.appendChild(el("div", `position:absolute;left:0;top:0;bottom:0;width:12px;border:1px solid #999;background:${cssGradient(b.stops)}`));
+      for (let j = 0; j <= 4; j++) {
+        const f = j / 4;
+        cb.appendChild(el("div", `position:absolute;left:16px;bottom:calc(${100 * f}% - 7px);font-variant-numeric:tabular-nums`, (+(b.min + f * (b.max - b.min)).toPrecision(3)).toString()));
+      }
+      root.appendChild(cb);
+    });
 
     const info = el("div", "position:absolute;left:8px;bottom:6px;color:#555;pointer-events:none");
-    const baseInfo = `${v.voxel_size} mm voxels · ticks every ${step} mm · drag rotate, scroll zoom, right-drag pan`;
+    const vox = volumes.length ? `${volumes.map((v) => v.spec.voxel_size).join("/")} mm voxels · ` : "";
+    const baseInfo = `${vox}ticks every ${fmt(step)} mm · drag rotate, scroll zoom, right-drag pan`;
     info.textContent = baseInfo;
     root.appendChild(info);
+    const tip = el("div", "position:absolute;display:none;pointer-events:none;background:rgba(30,30,30,.9);color:#fff;padding:3px 6px;border-radius:3px;white-space:pre;font-size:11px;line-height:1.35;z-index:5");
+    root.appendChild(tip);
 
-    // ---- hover: report the brightest voxel under the cursor ----
-    const raw = b64ToBytes(v.data);
+    // ---- hover: nearest marker/step within 10 px, else brightest voxel on the ray ----
     const ray = new THREE.Raycaster();
     const ndc = new THREE.Vector2();
-    renderer.domElement.addEventListener("mousemove", (ev) => {
-      const r = renderer.domElement.getBoundingClientRect();
-      ndc.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
-      ray.setFromCamera(ndc, camera);
-      const o = ray.ray.origin, d = ray.ray.direction;
-      const lo = new THREE.Vector3(...v.origin);
-      const hit = new THREE.Box3(lo, lo.clone().add(size));
-      const p0 = new THREE.Vector3();
-      if (!ray.ray.intersectBox(hit, p0)) { info.textContent = baseInfo; return; }
-      let best = -1, bi = null;
-      const step = v.voxel_size * 0.25;
-      for (let s = 0; s < 8 * (nx + ny + nz); s++) {
-        const p = p0.clone().addScaledVector(d, s * step).sub(lo).divideScalar(v.voxel_size);
-        const ix = Math.floor(p.x), iy = Math.floor(p.y), iz = Math.floor(p.z);
-        if (ix < 0 || iy < 0 || iz < 0 || ix >= nx || iy >= ny || iz >= nz) { if (s > 4) break; else continue; }
-        const val = raw[ix + nx * (iy + ny * iz)];
-        if (val > best) { best = val; bi = [ix, iy, iz]; }
+    const tmp = new THREE.Vector3();
+    function voxelUnder(o, d) {
+      let best = null;
+      for (const v of volumes) {
+        if (!v.mesh.visible) continue;
+        const p0 = new THREE.Vector3();
+        if (!new THREE.Ray(o, d).intersectBox(v.box3, p0)) continue;
+        const [nx, ny, nz] = v.spec.shape;
+        const vs = v.spec.voxel_size, lo = v.box3.min;
+        for (let s = 0; s < 4 * (nx + ny + nz); s++) {
+          tmp.copy(p0).addScaledVector(d, s * vs * 0.25).sub(lo).divideScalar(vs);
+          const ix = Math.floor(tmp.x), iy = Math.floor(tmp.y), iz = Math.floor(tmp.z);
+          if (ix < 0 || iy < 0 || iz < 0 || ix >= nx || iy >= ny || iz >= nz) { if (s > 4) break; else continue; }
+          const val = v.raw[ix + nx * (iy + ny * iz)] / 255;
+          if (val >= shared.thresh.value && (!best || val > best.u)) best = { u: val, v, idx: [ix, iy, iz] };
+        }
       }
-      if (!bi || best / 255 < uniforms.thresh.value) { info.textContent = baseInfo; return; }
-      const c = bi.map((k, a) => (v.origin[a] + (k + 0.5) * v.voxel_size).toFixed(0));
-      info.textContent = `voxel (${c.join(", ")}) mm · ${spec.colorbar_title} ${(best / 255 * spec.e_max).toPrecision(3)}`;
+      return best;
+    }
+    let pending = null;
+    function hover() {
+      const ev = pending; pending = null;
+      const r = renderer.domElement.getBoundingClientRect();
+      const mx = ev.clientX - r.left, my = ev.clientY - r.top;
+      let best = null, bd = 100;  // squared px
+      for (const L of layers) {
+        if (!L.visible || !L.hover) continue;
+        const pos = L.hover.pos;
+        for (let i = 0; i < pos.length / 3; i++) {
+          tmp.set(pos[3 * i], pos[3 * i + 1], pos[3 * i + 2]).project(camera);
+          if (tmp.z > 1) continue;
+          const dx = ((tmp.x + 1) / 2) * r.width - mx, dy = ((1 - tmp.y) / 2) * r.height - my;
+          const d2 = dx * dx + dy * dy;
+          if (d2 < bd) { bd = d2; best = `${L.name}\n${L.hover.text[i]}`; }
+        }
+      }
+      if (best) {
+        tip.textContent = best;
+        tip.style.display = "block";
+        tip.style.left = Math.min(mx + 12, r.width - tip.offsetWidth - 4) + "px";
+        tip.style.top = Math.max(my - tip.offsetHeight - 8, 4) + "px";
+        info.textContent = baseInfo;
+        return;
+      }
+      tip.style.display = "none";
+      ndc.set((mx / r.width) * 2 - 1, -(my / r.height) * 2 + 1);
+      ray.setFromCamera(ndc, camera);
+      const hit = voxelUnder(ray.ray.origin, ray.ray.direction);
+      if (!hit) { info.textContent = baseInfo; return; }
+      const c = hit.idx.map((k, a) => fmt(+(hit.v.spec.origin[a] + (k + 0.5) * hit.v.spec.voxel_size).toFixed(1)));
+      info.textContent = `${hit.v.spec.name}: voxel (${c.join(", ")}) mm · ${hit.v.spec.colorbar_title} ${(hit.u * hit.v.spec.e_max).toPrecision(3)}`;
+    }
+    renderer.domElement.addEventListener("mousemove", (ev) => {
+      if (!pending) requestAnimationFrame(hover);
+      pending = ev;
     });
+    renderer.domElement.addEventListener("mouseleave", () => { tip.style.display = "none"; info.textContent = baseInfo; });
 
     // ---- sizing / drawing (render on demand) ----
     function resize() {
       const w = root.clientWidth, h = root.clientHeight;
+      if (!w || !h) return;
       renderer.setSize(w, h, false);
       renderer.domElement.style.width = w + "px";
       renderer.domElement.style.height = h + "px";
@@ -405,13 +519,13 @@
       for (const lm of lineMats) lm.resolution.set(w, h);
     }
     function draw() { renderer.render(scene, camera); placeLabels(); }
-    controls.addEventListener("change", draw);
+    controls.addEventListener("change", () => { tip.style.display = "none"; draw(); });
     new ResizeObserver(() => { resize(); draw(); }).observe(root);
     inits.forEach((f) => f());
     resize();
     draw();
-    root._trackvis = { renderer, scene, camera, controls, uniforms, draw };
+    root._trackvis = { renderer, scene, camera, controls, draw };
   }
 
-  window.TrackVisVolume = { render };
+  window.TrackVis = { render };
 })();

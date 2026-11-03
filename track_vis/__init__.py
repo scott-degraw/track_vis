@@ -1,28 +1,16 @@
-from track_vis.viz import (
-    COLORSCALE,
-    VOXEL_COLORSCALE,
-    load_event,
-    particle_name,
-    plot_tracks,
-    plot_truth_vertices,
-    plot_voxels,
-    time_colorscale,
-    voxel_mesh,
-)
-from track_vis.volume import track_spec, volume_html, voxelize, write_volume_html
+"""Interactive three.js event displays for SNO+ imaging MC: tracks, vertices and voxel images."""
+
+from track_vis.colors import COLORSCALES, colorscale_stops, sample_colorscale
+from track_vis.display import EventDisplay, bin_deposits, voxelize
+from track_vis.io import load_event, particle_name
 
 __all__ = [
-    "COLORSCALE",
-    "VOXEL_COLORSCALE",
+    "COLORSCALES",
+    "EventDisplay",
+    "bin_deposits",
+    "colorscale_stops",
     "load_event",
     "particle_name",
-    "plot_tracks",
-    "plot_truth_vertices",
-    "plot_voxels",
-    "time_colorscale",
-    "track_spec",
-    "volume_html",
-    "voxel_mesh",
+    "sample_colorscale",
     "voxelize",
-    "write_volume_html",
 ]
