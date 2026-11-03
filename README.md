@@ -55,7 +55,7 @@ voxel is composited with its own opacity along every pixel's ray (exact voxel
 traversal, or trilinear with the "smooth" toggle), so there is no triangle sorting,
 and the image costs one byte per voxel instead of a mesh. Threshold, opacity,
 max-intensity projection and track visibility are adjustable in the page, and
-hovering reports the brightest voxel under the cursor.
+hovering reports the brightest voxel under the cursor. Three box edges carry labelled mm ticks.
 
 ```python
 from IPython.display import HTML

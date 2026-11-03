@@ -125,7 +125,6 @@ def volume_html(
     title: str | None = None,
     width: int = 900,
     height: int = 600,
-    axis_length: float = 100.0,
     pad: int = 1,
     lib: str = "cdn",
 ) -> str:
@@ -189,7 +188,6 @@ def volume_html(
         "title": title,
         "width": int(width),
         "height": int(height),
-        "axis_length": float(axis_length),
     }
 
     div_id = "tv-" + uuid.uuid4().hex[:12]

@@ -226,17 +226,58 @@
       trackObjs.push(line);
     }
 
-    // ---- axes gizmo (100 mm, at the volume's min corner) ----
-    const axLen = spec.axis_length;
-    const axes = new THREE.AxesHelper(axLen);
-    axes.position.set(...v.origin);
-    scene.add(axes);
+    // ---- ticked axes along three edges of the bounding box ----
+    // x runs along (y=lo, z=lo), y along (x=hi, z=lo), z along (x=lo, y=lo).
+    const lo = new THREE.Vector3(...v.origin);
+    const hi = lo.clone().add(size);
+    const span = Math.max(size.x, size.y, size.z);
+    const step = [50, 100, 200, 250, 500, 1000, 2000, 5000].find((s) => span / s <= 8) || 10000;
+    const tickLen = Math.max(0.02 * span, 0.3 * v.voxel_size);
+    const tickLabels = [];  // [Vector3 position, element]
+    const labelLayer = el("div", "position:absolute;inset:0;pointer-events:none;overflow:hidden");
+    const axisDefs = [
+      { a: "x", color: 0xd62728, base: [null, lo.y, lo.z], out: [0, -1, 0] },
+      { a: "y", color: 0x2ca02c, base: [hi.x, null, lo.z], out: [1, 0, 0] },
+      { a: "z", color: 0x1f77b4, base: [lo.x, lo.y, null], out: [-1, -1, 0] },
+    ];
+    for (const ax of axisDefs) {
+      const k = "xyz".indexOf(ax.a);
+      const out = new THREE.Vector3(...ax.out).normalize();
+      const at = (val) => new THREE.Vector3(...ax.base.map((b, i) => (i === k ? val : b)));
+      const pts = [at(lo.getComponent(k)), at(hi.getComponent(k))];
+      for (let t = Math.ceil(lo.getComponent(k) / step) * step; t <= hi.getComponent(k) + 1e-6; t += step) {
+        const p = at(t);
+        pts.push(p, p.clone().addScaledVector(out, tickLen));
+        const lab = el("div", "position:absolute;transform:translate(-50%,-50%);font-size:11px;color:#444;white-space:nowrap;font-variant-numeric:tabular-nums", String(Math.round(t)));
+        labelLayer.appendChild(lab);
+        tickLabels.push([p.clone().addScaledVector(out, tickLen * 2.6), lab]);
+      }
+      const mid = at(0.5 * (lo.getComponent(k) + hi.getComponent(k))).addScaledVector(out, tickLen * 5.5);
+      const title = el("div", "position:absolute;transform:translate(-50%,-50%);font-size:12px;font-weight:600;white-space:nowrap", `${ax.a} (mm)`);
+      title.style.color = "#" + ax.color.toString(16).padStart(6, "0");
+      labelLayer.appendChild(title);
+      tickLabels.push([mid, title]);
+      const geo = new THREE.BufferGeometry().setFromPoints(pts);
+      scene.add(new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: ax.color })));
+    }
+    root.appendChild(labelLayer);
+    const projected = new THREE.Vector3();
+    function placeLabels() {
+      const w = root.clientWidth, h = root.clientHeight;
+      for (const [p, lab] of tickLabels) {
+        projected.copy(p).project(camera);
+        const behind = projected.z > 1;
+        lab.style.display = behind ? "none" : "";
+        lab.style.left = ((projected.x + 1) / 2) * w + "px";
+        lab.style.top = ((1 - projected.y) / 2) * h + "px";
+      }
+    }
 
     // ---- camera ----
     const radius = size.length() * 0.5;
     controls.target.copy(centre);
     const resetCamera = () => {
-      camera.position.copy(centre).add(new THREE.Vector3(1.0, -1.4, 0.8).normalize().multiplyScalar(radius * 3.2));
+      camera.position.copy(centre).add(new THREE.Vector3(1.0, -1.4, 0.8).normalize().multiplyScalar(radius * 3.9));
       controls.target.copy(centre);
       controls.update();
     };
@@ -295,7 +336,7 @@
     root.appendChild(cb);
 
     const info = el("div", "position:absolute;left:8px;bottom:6px;color:#555;pointer-events:none");
-    const baseInfo = `${v.voxel_size} mm voxels · axes ${axLen} mm (x red, y green, z blue) · drag rotate, scroll zoom, right-drag pan`;
+    const baseInfo = `${v.voxel_size} mm voxels · ticks every ${step} mm · drag rotate, scroll zoom, right-drag pan`;
     info.textContent = baseInfo;
     root.appendChild(info);
 
@@ -336,7 +377,7 @@
       camera.updateProjectionMatrix();
       for (const lm of lineMats) lm.resolution.set(w, h);
     }
-    function draw() { renderer.render(scene, camera); }
+    function draw() { renderer.render(scene, camera); placeLabels(); }
     controls.addEventListener("change", draw);
     new ResizeObserver(() => { resize(); draw(); }).observe(root);
     inits.forEach((f) => f());
