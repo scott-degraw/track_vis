@@ -44,7 +44,11 @@ scene description; the browser draws it.
   `to_html(lib=)` wraps it in a fragment of `<script>`s + a container div;
   `_repr_html_` makes it render in Jupyter/Quarto; `write_html` writes a page.
   Also `voxelize` / `bin_deposits` (sparse/points -> dense `(grid, origin)`).
-- `track_vis/static/event_display.js`: the renderer (`window.TrackVis.render(el, spec)`).
+- `track_vis/static/event_display.js`: the renderer. `to_html` emits
+  `TrackVis.mount(id, spec, urls)`, which lazily loads three.js (from `urls`, or
+  already inlined when `urls` is null) and calls `render(el, spec)`. `render` is
+  split into layer builders (`addVolume`, `addLines`, `addPoints`), `addAxes`,
+  `addPanel`, `addColorbars` and `addHover`, sharing one `ctx` object.
   Volumes are `uint8` 3D textures ray-marched in a GLSL3 fragment shader: exact
   voxel traversal (Amanatides & Woo) in sharp mode, quarter-voxel jittered
   sampling in smooth (trilinear) mode, plus a max-intensity mode. All volumes

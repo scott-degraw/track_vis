@@ -9,6 +9,15 @@ import pytest
 from track_vis import EventDisplay, bin_deposits, colorscale_stops, sample_colorscale, voxelize
 
 
+def _mounted_spec(html):
+    """The spec passed to TrackVis.mount in an HTML fragment."""
+    args = re.search(r"TrackVis\.mount\((.*)\);</script>", html).group(1)
+    decoder = json.JSONDecoder()
+    _, end = decoder.raw_decode(args)  # element id
+    spec, _ = decoder.raw_decode(args, end + len(", "))
+    return spec
+
+
 def _decode_f32(s):
     return np.frombuffer(base64.b64decode(s), dtype=np.float32)
 
@@ -98,12 +107,45 @@ def test_vertices_and_deposits(tracks):
 def test_html_fragment(tracks):
     d = EventDisplay(title="t").add_tracks(**tracks).add_line([[0, 0, 0], [1, 1, 1]], "axis", dashed=True)
     out = d.to_html()
-    assert 'class="track-vis"' in out and "TrackVis.render" in out
+    assert 'class="track-vis"' in out and "TrackVis.mount(" in out
     assert "cdn.jsdelivr.net/npm/three@0.147.0/build/three.min.js" in out
-    spec = json.loads(re.search(r"const spec = (\{.*?\});", out).group(1))
+    spec = _mounted_spec(out)
     assert spec["title"] == "t" and len(spec["lines"]) == 3
     inline = d.to_html(lib="inline")
-    assert "cdn.jsdelivr" not in inline and inline.count("window.__tvThreeInline=true") == 1
+    assert "cdn.jsdelivr" not in inline and inline.count("__trackvis_three.min.js") == 2
     assert d._repr_html_().startswith("<script>")
     with pytest.raises(ValueError):
         d.to_html(lib="nope")
+
+
+def test_line_colours_follow_values_across_polylines():
+    paths = [np.zeros((2, 3)), np.ones((3, 3))]
+    d = EventDisplay().add_line(paths, values=[[0.0, 0.0], [1.0, 1.0, 1.0]], colorscale=["#000000", "#ffffff"])
+    col = _decode_f32(d.lines[0]["colors"]).reshape(-1, 3)
+    assert len(col) == 2 * (1 + 2)
+    np.testing.assert_allclose(col[:2], 0.0)  # first polyline at vmin
+    np.testing.assert_allclose(col[2:], 1.0)  # second at vmax
+    single = EventDisplay().add_line(np.zeros((4, 3)), values=np.arange(4.0))
+    assert len(_decode_f32(single.lines[0]["segments"])) == 3 * 2 * 3
+
+
+def test_input_errors():
+    d = EventDisplay()
+    with pytest.raises(ValueError, match="voxel_size"):
+        d.add_volume(np.zeros((2, 2, 2)), (0, 0, 0))
+    with pytest.raises(ValueError, match="origin"):
+        d.add_volume(np.zeros((2, 2, 2)), voxel_size=1.0)
+    with pytest.raises(ValueError, match="3D"):
+        d.add_volume(np.zeros((2, 2)), (0, 0, 0), 1.0)
+    with pytest.raises(ValueError, match="hover_text"):
+        d.add_line(np.zeros((3, 3)), hover_text=["a"])
+    with pytest.raises(ValueError, match="hover_text"):
+        d.add_points(np.zeros((2, 3)), hover_text=["a"])
+    with pytest.raises(ValueError, match="positive"):
+        bin_deposits(np.zeros((2, 3)), [0.0, 0.0], 10.0)
+
+
+def test_title_cannot_close_the_script_tag():
+    out = EventDisplay(title="</script><b>x</b>").to_html()
+    assert "</script><b>" not in out
+    assert _mounted_spec(out)["title"] == "</script><b>x</b>"

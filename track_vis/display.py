@@ -46,6 +46,7 @@ CDN_URLS = [f"https://cdn.jsdelivr.net/npm/three@{THREE_VERSION}/{path}" for _, 
 
 TIME_COLORSCALE = "plasma"
 VOXEL_COLORSCALE = "plasma"
+TIME_COLORBAR_TITLE = "Time (ns)"
 
 
 @cache
@@ -53,12 +54,44 @@ def _static(name: str) -> str:
     return resources.files("track_vis").joinpath("static", name).read_text(encoding="utf-8")
 
 
+def _inline_script(name: str, once_key: str | None = None) -> str:
+    """A <script> holding a static file; with *once_key* it runs once per page."""
+    body = _static(name)
+    if once_key is not None:
+        flag = f"window[{json.dumps('__trackvis_' + once_key)}]"
+        body = f"if (!{flag}) {{ {flag} = true;\n{body}\n}}"
+    return f"<script>{body}</script>"
+
+
+def _script_json(value) -> str:
+    """JSON safe to embed in an HTML <script> (no "</" that could close the tag)."""
+    return json.dumps(value, separators=(",", ":")).replace("</", "<\\/")
+
+
 def _b64(a: np.ndarray, dtype=np.float32) -> str:
     return base64.b64encode(np.ascontiguousarray(a, dtype=dtype).tobytes()).decode("ascii")
 
 
-def _np(a) -> np.ndarray:
+def _to_numpy(a) -> np.ndarray:
     return np.asarray(ak.to_numpy(a) if isinstance(a, ak.Array) else a, dtype=float)
+
+
+def _group_by_species(pdg) -> dict[str, list[int]]:
+    """Map particle name to the indices of entries with that PDG code, in first-seen order."""
+    groups: dict[str, list[int]] = {}
+    for i, code in enumerate(_to_numpy(pdg).astype(int)):
+        groups.setdefault(particle_name(int(code)), []).append(i)
+    return groups
+
+
+def _colors(values, vmin, vmax, colorscale, color: str, n: int) -> np.ndarray:
+    """(n, 3) RGB: *values* sampled on *colorscale* over [vmin, vmax], else *color* for all."""
+    if values is None:
+        return np.tile(hex_to_rgb(color), (n, 1))
+    values = np.asarray(values, dtype=float)
+    lo = float(values.min()) if vmin is None else vmin
+    hi = float(values.max()) if vmax is None else vmax
+    return sample_colorscale(colorscale, (values - lo) / ((hi - lo) or 1.0))
 
 
 def voxelize(centers: np.ndarray, values: np.ndarray, voxel_size: float) -> tuple[np.ndarray, np.ndarray]:
@@ -374,8 +407,8 @@ class EventDisplay:
         ValueError
             If no step has positive deposited energy.
         """
-        pts = np.stack([_np(ak.flatten(a, axis=None)) for a in (pos_x, pos_y, pos_z)], axis=-1)
-        dep = _np(ak.flatten(deposited_energy, axis=None))
+        pts = np.stack([_to_numpy(ak.flatten(a, axis=None)) for a in (pos_x, pos_y, pos_z)], axis=-1)
+        dep = _to_numpy(ak.flatten(deposited_energy, axis=None))
         grid, origin = bin_deposits(pts, dep, voxel_size)
         return self.add_volume(
             grid,
@@ -444,18 +477,14 @@ class EventDisplay:
         ValueError
             If `hover_text` does not have one entry per point.
         """
-        single = _is_single_path(points)
-        paths = [np.asarray(points, dtype=float).reshape(-1, 3)] if single else [np.asarray(p, float) for p in points]
-        if values is not None:
-            vals = [np.asarray(values, float)] if single else [np.asarray(v, float) for v in values]
-            flat = np.concatenate(vals) if vals else np.zeros(0)
-            lo = float(flat.min()) if vmin is None else vmin
-            hi = float(flat.max()) if vmax is None else vmax
-            cols = [sample_colorscale(colorscale, (v - lo) / ((hi - lo) or 1.0)) for v in vals]
-        else:
-            rgb = hex_to_rgb(color)
-            cols = [np.tile(rgb, (len(p), 1)) for p in paths]
-        seg, col = _polyline_segments(paths, cols)
+        if _is_single_path(points):
+            points = [points]
+            values = None if values is None else [values]
+        paths = [np.asarray(p, dtype=float).reshape(-1, 3) for p in points]
+        lengths = [len(p) for p in paths]
+        flat_values = None if values is None else np.concatenate([np.asarray(v, float) for v in values])
+        rgb = _colors(flat_values, vmin, vmax, colorscale, color, sum(lengths))
+        seg, col = _polyline_segments(paths, np.split(rgb, np.cumsum(lengths)[:-1]))
         layer = {
             "name": name,
             "segments": _b64(seg),
@@ -516,22 +545,16 @@ class EventDisplay:
         EventDisplay
             This display, for chaining.
         """
-        pdgs = _np(pdg).astype(int)
-        cols = [
-            ak.Array(c) if not isinstance(c, ak.Array) else c for c in (pos_x, pos_y, pos_z, time, deposited_energy)
-        ]
+        columns = [ak.Array(c) for c in (pos_x, pos_y, pos_z, time, deposited_energy)]
         if t_min is None or t_max is None:
-            all_t = _np(ak.flatten(cols[3], axis=None))
+            all_t = _to_numpy(ak.flatten(columns[3], axis=None))
             t_min = float(all_t.min()) if t_min is None else t_min
             t_max = float(all_t.max()) if t_max is None else t_max
-        by_species: dict[str, list[int]] = {}
-        for i, p in enumerate(pdgs):
-            by_species.setdefault(particle_name(int(p)), []).append(i)
-        for species, idx in by_species.items():
+        for species, idx in _group_by_species(pdg).items():
             paths, times, texts = [], [], []
             dep_total = 0.0
             for i in idx:
-                x, y, z, t, d = (_np(c[i]) for c in cols)
+                x, y, z, t, d = (_to_numpy(c[i]) for c in columns)
                 paths.append(np.stack([x, y, z], axis=-1))
                 times.append(t)
                 dep_total += float(d.sum())
@@ -604,13 +627,7 @@ class EventDisplay:
             If `hover_text` does not have one entry per marker.
         """
         pts = np.asarray(points, dtype=float).reshape(-1, 3)
-        if values is not None:
-            v = np.asarray(values, dtype=float)
-            lo = float(v.min()) if vmin is None else vmin
-            hi = float(v.max()) if vmax is None else vmax
-            rgb = sample_colorscale(colorscale, (v - lo) / ((hi - lo) or 1.0))
-        else:
-            rgb = np.tile(hex_to_rgb(color), (len(pts), 1))
+        rgb = _colors(values, vmin, vmax, colorscale, color, len(pts))
         text = list(map(str, hover_text)) if hover_text is not None else [""] * len(pts)
         if len(text) != len(pts):
             raise ValueError("hover_text needs one entry per point")
@@ -668,16 +685,12 @@ class EventDisplay:
         EventDisplay
             This display, for chaining.
         """
-        pos = np.stack([_np(x), _np(y), _np(z)], axis=-1)
-        t = _np(t)
-        energy = _np(energy)
-        pdgs = _np(pdg).astype(int)
+        pos = np.stack([_to_numpy(x), _to_numpy(y), _to_numpy(z)], axis=-1)
+        t = _to_numpy(t)
+        energy = _to_numpy(energy)
         t_min = float(t.min()) if t_min is None else t_min
         t_max = float(t.max()) if t_max is None else t_max
-        by_species: dict[str, list[int]] = {}
-        for i, p in enumerate(pdgs):
-            by_species.setdefault(particle_name(int(p)), []).append(i)
-        for species, idx in by_species.items():
+        for species, idx in _group_by_species(pdg).items():
             idx = np.array(idx)
             self.add_points(
                 pos[idx],
@@ -693,8 +706,14 @@ class EventDisplay:
         return self
 
     def _time_colorbar(self, t_min: float, t_max: float, colorscale) -> None:
-        bar = {"title": "Time (ns)", "stops": colorscale_stops(colorscale), "min": float(t_min), "max": float(t_max)}
-        self.colorbars = [b for b in self.colorbars if b["title"] != "Time (ns)"] + [bar]
+        """Set the shared time colour bar, replacing any earlier one."""
+        bar = {
+            "title": TIME_COLORBAR_TITLE,
+            "stops": colorscale_stops(colorscale),
+            "min": float(t_min),
+            "max": float(t_max),
+        }
+        self.colorbars = [b for b in self.colorbars if b["title"] != TIME_COLORBAR_TITLE] + [bar]
 
     # ------------------------------------------------------------------ output
     def spec(self) -> dict:
@@ -742,42 +761,26 @@ class EventDisplay:
         ValueError
             If `lib` is not "cdn" or "inline".
         """
-        div_id = "tv-" + uuid.uuid4().hex[:12]
-        parts = []
         if lib == "inline":
-            for fname, _ in _VENDOR_FILES:
-                parts.append(f"<script>if(!window.__tvThreeInline){{{_static(f'vendor/{fname}')}\n}}</script>")
-            parts.append("<script>window.__tvThreeInline=true;</script>")
-            loader = "Promise.resolve()"
+            # Each vendored file runs only once per page, however many displays embed it.
+            parts = [_inline_script(f"vendor/{fname}", once_key=fname) for fname, _ in _VENDOR_FILES]
+            urls = None
         elif lib == "cdn":
-            loader = (
-                "(window.__tvThree = window.__tvThree || "
-                + json.dumps(CDN_URLS)
-                + ".reduce((p, u) => p.then(() => new Promise((ok, err) => { const s = document.createElement('script'); s.src = u;"
-                " s.onload = ok; s.onerror = () => err(u); document.head.appendChild(s); })), Promise.resolve()))"
-            )
+            parts = []
+            urls = CDN_URLS
         else:
             raise ValueError("lib must be 'cdn' or 'inline'")
-        parts.append(f"<script>{_static('event_display.js')}</script>")
-        parts.append(f'<div id="{div_id}" class="track-vis" style="min-height:{self.height}px"></div>')
-        # Initialise when scrolled near view: browsers cap live WebGL contexts at ~16 per page.
-        parts.append(
-            "<script>(function(){"
-            f"const el = document.getElementById({json.dumps(div_id)});"
-            f"const spec = {json.dumps(self.spec(), separators=(',', ':'))};"
-            "let done = false;"
-            "const go = () => { if (done) return; done = true;"
-            f"{loader}.then(() => TrackVis.render(el, spec))"
-            ".catch(e => { el.textContent = 'track_vis: could not load three.js (' + e + ')'; }); };"
-            "if ('IntersectionObserver' in window) {"
-            "new IntersectionObserver((es, ob) => { if (es.some(e => e.isIntersecting)) { ob.disconnect(); go(); } },"
-            "{ rootMargin: '300px' }).observe(el);"
-            "} else { go(); }"
-            "})();</script>"
-        )
+        div_id = "track-vis-" + uuid.uuid4().hex[:12]
+        args = ", ".join(_script_json(a) for a in (div_id, self.spec(), urls))
+        parts += [
+            _inline_script("event_display.js"),
+            f'<div id="{div_id}" class="track-vis" style="min-height:{self.height}px"></div>',
+            f"<script>TrackVis.mount({args});</script>",
+        ]
         return "\n".join(parts)
 
     def _repr_html_(self) -> str:
+        """Render in Jupyter and Quarto (three.js from the CDN)."""
         return self.to_html()
 
     def write_html(self, path: str, lib: str = "inline", page_title: str | None = None) -> None:
