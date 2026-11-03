@@ -1,4 +1,12 @@
-"""Built-in colour scales (evenly spaced hex stops, matplotlib/Plotly definitions)."""
+"""
+colors.py
+
+Built-in colour scales and helpers to sample them.
+
+The scales are evenly spaced hex stops of the matplotlib/Plotly definitions
+of plasma, viridis, inferno, magma, cividis and turbo, so the package needs
+no plotting library.
+"""
 
 from __future__ import annotations
 
@@ -86,10 +94,24 @@ COLORSCALES: dict[str, list[str]] = {
 
 
 def colorscale_stops(colorscale: str | list) -> list[list]:
-    """Return ``[[pos, "#rrggbb"], ...]`` for a scale name or an explicit list.
+    """
+    Return the stops of a colour scale as ``[[pos, "#rrggbb"], ...]``.
 
-    *colorscale* is a name from ``COLORSCALES`` (case-insensitive), a list of
-    hex colours (evenly spaced), or a list of ``[pos, "#rrggbb"]`` pairs.
+    Parameters
+    ----------
+    colorscale : str or list
+        A name from `COLORSCALES` (case-insensitive), a list of hex colours
+        (spaced evenly over [0, 1]), or a list of ``[pos, "#rrggbb"]`` pairs.
+
+    Returns
+    -------
+    list of list
+        ``[position, hex colour]`` pairs with positions in [0, 1].
+
+    Raises
+    ------
+    ValueError
+        If `colorscale` is a name not in `COLORSCALES`.
     """
     if isinstance(colorscale, str):
         try:
@@ -106,12 +128,43 @@ def colorscale_stops(colorscale: str | list) -> list[list]:
 
 
 def hex_to_rgb(color: str) -> np.ndarray:
-    """``"#rrggbb"`` to an RGB array in [0, 1]."""
+    """
+    Convert a ``"#rrggbb"`` colour to RGB values in [0, 1].
+
+    Parameters
+    ----------
+    color : str
+        Hex colour string with a leading ``#``.
+
+    Returns
+    -------
+    numpy.ndarray, shape (3,)
+        Red, green and blue in [0, 1].
+    """
     return np.array([int(color[i : i + 2], 16) for i in (1, 3, 5)], dtype=float) / 255.0
 
 
 def sample_colorscale(colorscale: str | list, u: np.ndarray) -> np.ndarray:
-    """Map values *u* in [0, 1] (clipped) to an ``(N, 3)`` RGB array in [0, 1]."""
+    """
+    Map values in [0, 1] to colours by linear interpolation between stops.
+
+    Parameters
+    ----------
+    colorscale : str or list
+        Colour scale name or stops (see `colorscale_stops`).
+    u : array_like, shape (N,)
+        Positions on the scale; values outside [0, 1] are clipped.
+
+    Returns
+    -------
+    numpy.ndarray, shape (N, 3)
+        RGB colours in [0, 1].
+
+    Raises
+    ------
+    ValueError
+        If `colorscale` is an unknown name.
+    """
     stops = colorscale_stops(colorscale)
     pos = np.array([p for p, _ in stops])
     rgb = np.array([hex_to_rgb(c) for _, c in stops])

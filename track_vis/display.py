@@ -1,4 +1,7 @@
-"""Interactive 3D event displays rendered with three.js in the browser.
+"""
+display.py
+
+Interactive 3D event displays rendered with three.js in the browser.
 
 ``EventDisplay`` collects layers (voxel volumes, polylines, markers) and turns
 them into one self-contained HTML fragment. Voxel images are uploaded to the
@@ -59,11 +62,26 @@ def _np(a) -> np.ndarray:
 
 
 def voxelize(centers: np.ndarray, values: np.ndarray, voxel_size: float) -> tuple[np.ndarray, np.ndarray]:
-    """Scatter per-voxel values at regular-grid *centers* into a dense array.
+    """
+    Scatter per-voxel values at regular-grid centres into a dense array.
 
-    Returns ``(grid, origin)``: ``grid`` has shape ``(nx, ny, nz)`` and
-    ``origin`` is the min corner (mm) of voxel ``[0, 0, 0]``. Values of
-    repeated centres are summed.
+    Values of repeated centres are summed.
+
+    Parameters
+    ----------
+    centers : array_like, shape (N, 3)
+        Voxel centre positions (mm), all on one grid of pitch `voxel_size`.
+    values : array_like, shape (N,)
+        Value of each voxel, e.g. reconstructed energy (MeV).
+    voxel_size : float
+        Grid pitch (mm).
+
+    Returns
+    -------
+    grid : numpy.ndarray, shape (nx, ny, nz)
+        Dense ``float32`` array indexed by x, y, z voxel index.
+    origin : numpy.ndarray, shape (3,)
+        Min corner (mm) of voxel ``[0, 0, 0]``.
     """
     centers = np.asarray(centers, dtype=float).reshape(-1, 3)
     lo = centers.min(axis=0)
@@ -74,9 +92,31 @@ def voxelize(centers: np.ndarray, values: np.ndarray, voxel_size: float) -> tupl
 
 
 def bin_deposits(points: np.ndarray, energies: np.ndarray, voxel_size: float) -> tuple[np.ndarray, np.ndarray]:
-    """Sum point energy deposits into cubes aligned to multiples of *voxel_size*.
+    """
+    Sum point energy deposits into cubes aligned to multiples of `voxel_size`.
 
-    Returns ``(grid, origin)`` like ``voxelize``.
+    Deposits with zero or negative energy are ignored.
+
+    Parameters
+    ----------
+    points : array_like, shape (N, 3)
+        Deposit positions (mm).
+    energies : array_like, shape (N,)
+        Deposited energy at each point (MeV).
+    voxel_size : float
+        Cube edge length (mm).
+
+    Returns
+    -------
+    grid : numpy.ndarray, shape (nx, ny, nz)
+        Summed energy per cube, as ``float32``.
+    origin : numpy.ndarray, shape (3,)
+        Min corner (mm) of cube ``[0, 0, 0]``.
+
+    Raises
+    ------
+    ValueError
+        If no deposit has positive energy.
     """
     points = np.asarray(points, dtype=float).reshape(-1, 3)
     energies = np.asarray(energies, dtype=float)
@@ -113,9 +153,10 @@ def _polyline_segments(paths: list[np.ndarray], colors: list[np.ndarray]) -> tup
 
 
 class EventDisplay:
-    """A 3D scene of voxel volumes, polylines and markers, rendered with three.js.
+    """
+    Build a 3D scene of voxel volumes, polylines and markers for three.js.
 
-    Every ``add_*`` method returns ``self`` so calls can be chained::
+    Every ``add_*`` method returns the display itself, so calls chain::
 
         disp = EventDisplay(title="Event 3")
         disp.add_volume(centers=c, energies=e, voxel_size=100)
@@ -123,19 +164,49 @@ class EventDisplay:
         disp.add_vertices(**vertices, t_min=t_min, t_max=t_max)
         disp  # renders in Jupyter / Quarto
 
+    The volume style arguments set the initial values of controls in the
+    page and are shared by all volumes in the scene.
+
     Parameters
     ----------
-    title:
-        Shown at the top of the control panel.
-    width, height:
-        Maximum width and fixed height of the view, in CSS pixels.
-    threshold, density, gamma, smooth:
-        Initial volume rendering style, shared by all volumes and adjustable
-        in the page. ``threshold`` is the fraction of each volume's ``e_max``
-        below which voxels are transparent; ``density`` the optical depth of
-        one voxel pitch at ``e_max``; ``gamma`` the exponent of the opacity
-        curve (>1 fades faint voxels); ``smooth`` trilinear interpolation
-        instead of sharp voxel cubes.
+    title : str, optional
+        Text shown at the top of the control panel. Default is None.
+    width : int, optional
+        Maximum width of the view in CSS pixels. Default is 900.
+    height : int, optional
+        Height of the view in CSS pixels. Default is 600.
+    threshold : float, optional
+        Fraction of each volume's `e_max` below which voxels are fully
+        transparent. Default is 0.05.
+    density : float, optional
+        Optical depth of one voxel pitch at `e_max`; higher is more opaque.
+        Default is 2.0.
+    gamma : float, optional
+        Exponent of the opacity curve on ``value / e_max``; values above 1
+        fade faint voxels. Default is 2.0.
+    smooth : bool, optional
+        If True, start with trilinear interpolation instead of sharp voxel
+        cubes. Default is False.
+
+    Attributes
+    ----------
+    title : str or None
+        Title shown in the control panel.
+    width : int
+        Maximum view width in CSS pixels.
+    height : int
+        View height in CSS pixels.
+    volume_style : dict
+        Initial ``threshold``, ``density``, ``gamma`` and ``smooth`` values.
+    volumes : list of dict
+        Volume layers, as sent to the browser.
+    lines : list of dict
+        Polyline layers, as sent to the browser.
+    points : list of dict
+        Marker layers, as sent to the browser.
+    colorbars : list of dict
+        Extra colour bars (the shared time bar); volume bars come from
+        `volumes`.
     """
 
     def __init__(
@@ -178,15 +249,52 @@ class EventDisplay:
         pad: int = 1,
         visible: bool = True,
     ) -> EventDisplay:
-        """Add a voxel image, ray-marched on the GPU.
+        """
+        Add a voxel image, ray-marched on the GPU.
 
-        Pass either a dense ``grid`` (shape ``(nx, ny, nz)``, indexed x, y, z)
-        with its min-corner ``origin`` and ``voxel_size``, or sparse
-        ``centers`` / ``energies`` on a regular grid plus ``voxel_size``.
+        Pass either a dense `grid` with its `origin`, or sparse `centers`
+        and `energies` on a regular grid; `voxel_size` is needed for both.
+        The image is quantised to 8 bits relative to `e_max`.
 
-        ``e_max`` is the top of the colour and opacity scale (default: the
-        image maximum); pass a common value to compare events. ``pad`` adds
-        empty voxels on every side so the image does not touch its box.
+        Parameters
+        ----------
+        grid : array_like, shape (nx, ny, nz), optional
+            Dense image indexed by x, y, z voxel index.
+        origin : array_like, shape (3,) or float, optional
+            Min corner (mm) of voxel ``[0, 0, 0]``; a scalar applies to all
+            three axes. Required with `grid`.
+        voxel_size : float
+            Voxel pitch (mm).
+        centers : array_like, shape (N, 3), optional
+            Voxel centres (mm) on a regular grid, used when `grid` is None.
+        energies : array_like, shape (N,), optional
+            Value of each voxel in `centers`.
+        e_max : float, optional
+            Top of the colour and opacity scale. Default is the image
+            maximum; pass a common value to compare events.
+        name : str, optional
+            Layer name shown in the control panel. Default is "voxels".
+        colorscale : str or list, optional
+            Colour scale name or stops (see `colors.colorscale_stops`).
+            Default is "plasma".
+        colorbar_title : str, optional
+            Title of this volume's colour bar. Default is "Energy (MeV)".
+        pad : int, optional
+            Empty voxels added on every side so the image does not touch
+            its box. Default is 1.
+        visible : bool, optional
+            Whether the layer starts visible. Default is True.
+
+        Returns
+        -------
+        EventDisplay
+            This display, for chaining.
+
+        Raises
+        ------
+        ValueError
+            If `voxel_size` is missing, if neither `grid` and `origin` nor
+            `centers` and `energies` are given, or if `grid` is not 3D.
         """
         if voxel_size is None:
             raise ValueError("voxel_size is required")
@@ -234,10 +342,37 @@ class EventDisplay:
         colorbar_title: str = "Voxel dep. energy (MeV)",
         **kwargs,
     ) -> EventDisplay:
-        """Bin per-step deposited energy (jagged, track x step) into a voxel volume.
+        """
+        Bin per-step deposited energy into a voxel volume.
 
-        Cubes are aligned to multiples of ``voxel_size``. Extra keyword
-        arguments go to ``add_volume``.
+        Cubes are aligned to multiples of `voxel_size` (see `bin_deposits`).
+        Inputs are jagged arrays indexed by track and step, as returned by
+        `io.load_event`.
+
+        Parameters
+        ----------
+        pos_x, pos_y, pos_z : awkward.Array
+            Step positions (mm), shape (track, step).
+        deposited_energy : awkward.Array
+            Energy deposited at each step (MeV), shape (track, step).
+        voxel_size : float, optional
+            Cube edge length (mm). Default is 100.0.
+        name : str, optional
+            Layer name. Default is "deposits (<voxel_size> mm)".
+        colorbar_title : str, optional
+            Title of the colour bar. Default is "Voxel dep. energy (MeV)".
+        **kwargs
+            Passed on to `add_volume` (e.g. `e_max`, `colorscale`, `pad`).
+
+        Returns
+        -------
+        EventDisplay
+            This display, for chaining.
+
+        Raises
+        ------
+        ValueError
+            If no step has positive deposited energy.
         """
         pts = np.stack([_np(ak.flatten(a, axis=None)) for a in (pos_x, pos_y, pos_z)], axis=-1)
         dep = _np(ak.flatten(deposited_energy, axis=None))
@@ -268,12 +403,46 @@ class EventDisplay:
         hover_text: list[str] | None = None,
         visible: bool = True,
     ) -> EventDisplay:
-        """Add one polyline, or several as a list of ``(N, 3)`` arrays in one layer.
+        """
+        Add one polyline, or several polylines as one layer.
 
-        Colour is one hex ``color``, or sampled from ``colorscale`` over
-        ``[vmin, vmax]`` when per-point ``values`` (same nesting as
-        ``points``) are given. ``width`` is in pixels, ``dash`` in mm.
-        ``hover_text`` gives one string per point (flattened over polylines).
+        Lines are drawn in one hex `color`, or coloured per point by
+        sampling `colorscale` over ``[vmin, vmax]`` when `values` is given.
+
+        Parameters
+        ----------
+        points : array_like, shape (N, 3), or list of such arrays
+            Vertices of one polyline, or a list of polylines (mm).
+        name : str, optional
+            Layer name shown in the control panel. Default is "line".
+        values : array_like, optional
+            Per-point values with the same nesting as `points`.
+        vmin, vmax : float, optional
+            Colour scale range for `values`. Default is their min and max.
+        colorscale : str or list, optional
+            Colour scale used with `values`. Default is "plasma".
+        color : str, optional
+            Hex colour used when `values` is None. Default is "#1f77b4".
+        width : float, optional
+            Line width in pixels. Default is 3.0.
+        dashed : bool, optional
+            If True, draw a dashed line. Default is False.
+        dash : float, optional
+            Dash length (mm). Default is 20.0.
+        hover_text : list of str, optional
+            One hover string per point, flattened over all polylines.
+        visible : bool, optional
+            Whether the layer starts visible. Default is True.
+
+        Returns
+        -------
+        EventDisplay
+            This display, for chaining.
+
+        Raises
+        ------
+        ValueError
+            If `hover_text` does not have one entry per point.
         """
         single = _is_single_path(points)
         paths = [np.asarray(points, dtype=float).reshape(-1, 3)] if single else [np.asarray(p, float) for p in points]
@@ -318,12 +487,34 @@ class EventDisplay:
         colorscale: str | list = TIME_COLORSCALE,
         width: float = 3.0,
     ) -> EventDisplay:
-        """Add MC truth tracks coloured by step time, one toggleable layer per species.
+        """
+        Add MC truth tracks coloured by step time, one layer per species.
 
-        Columns mirror the ntuple: flat ``pdg`` (one per track) and jagged
-        ``pos_x/y/z``, ``time``, ``deposited_energy`` (track x step). Use the
-        same ``t_min``/``t_max`` for ``add_vertices`` so both share the time
-        colour bar (default: the range of the step times).
+        Columns mirror the ``imaging_reco`` ntuple branches. Hovering over a
+        step shows its time and deposited energy. Use the same `t_min` and
+        `t_max` for `add_vertices` so both share the time colour bar.
+
+        Parameters
+        ----------
+        pdg : array_like, shape (n_tracks,)
+            PDG code of each track.
+        pos_x, pos_y, pos_z : awkward.Array or list of lists
+            Step positions (mm), shape (track, step).
+        time : awkward.Array or list of lists
+            Step times (ns), shape (track, step).
+        deposited_energy : awkward.Array or list of lists
+            Energy deposited at each step (MeV), shape (track, step).
+        t_min, t_max : float, optional
+            Time colour scale range. Default is the range of step times.
+        colorscale : str or list, optional
+            Time colour scale. Default is "plasma".
+        width : float, optional
+            Line width in pixels. Default is 3.0.
+
+        Returns
+        -------
+        EventDisplay
+            This display, for chaining.
         """
         pdgs = _np(pdg).astype(int)
         cols = [
@@ -375,7 +566,43 @@ class EventDisplay:
         hover_text: list[str] | None = None,
         visible: bool = True,
     ) -> EventDisplay:
-        """Add round markers (``size`` in pixels), coloured like ``add_line``."""
+        """
+        Add round markers as one layer.
+
+        Markers are drawn in one hex `color`, or coloured per point from
+        `colorscale` over ``[vmin, vmax]`` when `values` is given.
+
+        Parameters
+        ----------
+        points : array_like, shape (N, 3)
+            Marker positions (mm).
+        name : str, optional
+            Layer name shown in the control panel. Default is "points".
+        values : array_like, shape (N,), optional
+            Per-marker values to colour by.
+        vmin, vmax : float, optional
+            Colour scale range for `values`. Default is their min and max.
+        colorscale : str or list, optional
+            Colour scale used with `values`. Default is "plasma".
+        color : str, optional
+            Hex colour used when `values` is None. Default is "#1f77b4".
+        size : float, optional
+            Marker diameter in pixels. Default is 12.0.
+        hover_text : list of str, optional
+            One hover string per marker.
+        visible : bool, optional
+            Whether the layer starts visible. Default is True.
+
+        Returns
+        -------
+        EventDisplay
+            This display, for chaining.
+
+        Raises
+        ------
+        ValueError
+            If `hover_text` does not have one entry per marker.
+        """
         pts = np.asarray(points, dtype=float).reshape(-1, 3)
         if values is not None:
             v = np.asarray(values, dtype=float)
@@ -412,9 +639,34 @@ class EventDisplay:
         colorscale: str | list = TIME_COLORSCALE,
         size: float = 12.0,
     ) -> EventDisplay:
-        """Add MC truth vertices coloured by time, one layer per species.
+        """
+        Add MC truth vertices coloured by time, one layer per species.
 
-        Flat arrays, one entry per vertex (``mcpdgs``, ``mcxs``... in the ntuple).
+        Arrays are flat, one entry per vertex, mirroring the ntuple's
+        ``mcpdgs``, ``mcxs``, ``mcys``, ``mczs``, ``mcts`` and ``mckes``.
+        Hovering over a vertex shows its energy and time.
+
+        Parameters
+        ----------
+        pdg : array_like, shape (N,)
+            PDG code of each vertex particle.
+        x, y, z : array_like, shape (N,)
+            Vertex positions (mm).
+        t : array_like, shape (N,)
+            Vertex times (ns).
+        energy : array_like, shape (N,)
+            Kinetic energy of each particle (MeV).
+        t_min, t_max : float, optional
+            Time colour scale range. Default is the range of `t`.
+        colorscale : str or list, optional
+            Time colour scale. Default is "plasma".
+        size : float, optional
+            Marker diameter in pixels. Default is 12.0.
+
+        Returns
+        -------
+        EventDisplay
+            This display, for chaining.
         """
         pos = np.stack([_np(x), _np(y), _np(z)], axis=-1)
         t = _np(t)
@@ -446,7 +698,15 @@ class EventDisplay:
 
     # ------------------------------------------------------------------ output
     def spec(self) -> dict:
-        """The JSON-serialisable scene description passed to the browser."""
+        """
+        Return the JSON-serialisable scene description passed to the browser.
+
+        Returns
+        -------
+        dict
+            Title, size, volume style, and the volume, line, marker and
+            colour bar layers.
+        """
         return {
             "title": self.title,
             "width": self.width,
@@ -459,10 +719,28 @@ class EventDisplay:
         }
 
     def to_html(self, lib: str = "cdn") -> str:
-        """Return an HTML fragment (scripts + container div) for this scene.
+        """
+        Return an HTML fragment (scripts and a container div) for this scene.
 
-        ``lib="cdn"`` loads three.js from jsDelivr once per page; ``"inline"``
-        embeds it, so the fragment needs no network.
+        The display initialises when it scrolls near the viewport, since
+        browsers cap live WebGL contexts at about 16 per page.
+
+        Parameters
+        ----------
+        lib : {"cdn", "inline"}, optional
+            "cdn" loads three.js from pinned jsDelivr URLs, once per page;
+            "inline" embeds the vendored copy so no network is needed.
+            Default is "cdn".
+
+        Returns
+        -------
+        str
+            The HTML fragment.
+
+        Raises
+        ------
+        ValueError
+            If `lib` is not "cdn" or "inline".
         """
         div_id = "tv-" + uuid.uuid4().hex[:12]
         parts = []
@@ -503,7 +781,24 @@ class EventDisplay:
         return self.to_html()
 
     def write_html(self, path: str, lib: str = "inline", page_title: str | None = None) -> None:
-        """Write a standalone page (three.js inlined by default, so it works offline)."""
+        """
+        Write the display to a standalone HTML page.
+
+        Parameters
+        ----------
+        path : str
+            Output file path.
+        lib : {"inline", "cdn"}, optional
+            How three.js is included (see `to_html`). Default is "inline",
+            so the page works offline.
+        page_title : str, optional
+            Browser tab title. Default is the display title.
+
+        Raises
+        ------
+        ValueError
+            If `lib` is not "cdn" or "inline".
+        """
         title = html.escape(page_title or self.title or "track_vis event display")
         with open(path, "w", encoding="utf-8") as f:
             f.write(
