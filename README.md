@@ -47,6 +47,28 @@ tracks, vertices = load_event(path, index=0)
 fig = go.Figure(data=plot_tracks(**tracks, t_min=t_min, t_max=t_max) + plot_truth_vertices(**vertices, t_min=t_min, t_max=t_max))
 ```
 
+## Volume viewer (three.js)
+
+`track_vis.volume` renders a reconstructed voxel image as a GPU ray-marched volume
+with truth tracks on top, as an HTML fragment for Jupyter or a Quarto page. Each
+voxel is composited with its own opacity along every pixel's ray (exact voxel
+traversal, or trilinear with the "smooth" toggle), so there is no triangle sorting,
+and the image costs one byte per voxel instead of a mesh. Threshold, opacity,
+max-intensity projection and track visibility are adjustable in the page, and
+hovering reports the brightest voxel under the cursor.
+
+```python
+from IPython.display import HTML
+from track_vis import track_spec, volume_html
+
+tracks = [track_spec(points, "primary track", values=times), track_spec(axis, "reco axis", dashed=True)]
+HTML(volume_html(centers=centers, energies=energies, voxel_size=100.0, tracks=tracks))
+# or a dense image: volume_html(grid, origin, voxel_size, tracks=tracks)
+```
+
+three.js r147 comes from a pinned jsDelivr URL by default; `lib="inline"` embeds
+the copy vendored in `track_vis/static/vendor` (MIT) for pages with no network.
+
 ## Example
 
 `examples/synthetic_event.ipynb` builds a fake event (electron, proton, and gamma
