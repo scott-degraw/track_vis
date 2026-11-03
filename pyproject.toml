@@ -1,13 +1,12 @@
 [project]
 name = "track_vis"
-version = "0.1.0"
-description = "Plotly-based 3D event display for particle tracks, voxels, and truth vertices"
+version = "0.2.0"
+description = "three.js 3D event display for particle tracks, truth vertices and voxel images"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "awkward>=2.9.4",
     "numpy>=2.2.6",
-    "plotly>=6.5.0",
     "uproot>=5.7.5",
 ]
 
@@ -29,4 +28,5 @@ dev = [
     "jupyter>=1.1.1",
     "pre-commit>=4.0.1",
     "nbstripout>=0.8.1",
+    "playwright>=1.48",
 ]

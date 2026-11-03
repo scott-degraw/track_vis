@@ -17,8 +17,12 @@ uv sync --group dev
 # Lint + format
 ruff check . && ruff format .
 
-# Run tests (no test suite exists yet)
+# Run tests (Python side: display, scene encoding, HTML output, voxels, colours)
 uv run pytest
+
+# Browser smoke test of the JS renderer (skipped unless Chromium is installed)
+uv run playwright install chromium
+TRACK_VIS_REQUIRE_BROWSER=1 uv run pytest tests/test_render_in_browser.py
 
 # Run the example notebook end-to-end and write outputs in place
 uv run jupyter nbconvert --to notebook --execute --inplace examples/synthetic_event.ipynb
@@ -35,18 +39,41 @@ next committed — that's the hook doing its job, not a bug.
 
 ## Architecture
 
-This is a small, single-module Plotly plotting library (`track_vis/viz.py`) for
-3D SNO+ event displays. There is no class hierarchy — every plotting function is a
-free function that returns a `list` of Plotly trace objects (`go.Scatter3d` /
-`go.Mesh3d`), meant to be concatenated and passed into `go.Figure(data=...)`. There
-is no `Figure`-building helper in the library itself — layout (titles, axis
-labels, `aspectmode`) is left to the caller/notebook.
+A small three.js event-display library for 3D SNO+ events. The Python and
+JavaScript halves are kept apart so the Python can be read on its own:
+
+- `track_vis/display.py`: `EventDisplay`, the user API, and `DisplayMenu` (a
+  drop-down of displays sharing one view). Turns physics inputs
+  into `Scene` layers (colours, species grouping, hover text). No JSON or JS.
+- `track_vis/scene.py`: `Scene`, `VolumeLayer`, `LineLayer`, `PointLayer`,
+  `Colorbar`, `VolumeStyle` dataclasses holding NumPy data, plus `to_json()`
+  and the array encodings. This is the contract with the browser: every field
+  the JS reads is documented here.
+- `track_vis/browser.py`: the only Python module that touches JavaScript.
+  Wraps a scene in an HTML fragment (`scene_html`) or page (`page_html`):
+  the renderer script, a div, and `TrackVis.mount(id, scene_json, urls)`
+  (`menu_html` and `TrackVis.mountMenu` for a `DisplayMenu`).
+- `track_vis/voxels.py` (`voxelize`, `bin_deposits`), `colors.py` (colour
+  scales, no Plotly), `io.py` (`load_event`, `particle_name`).
+- `track_vis/js/`: `event_display.js` (the renderer) and `vendor/` (three.js
+  r147 classic builds, MIT). `js/README.md` explains its layout and which file
+  to edit for which change.
+
+Volumes are `uint8` 3D textures ray-marched in a GLSL3 fragment shader: exact
+voxel traversal (Amanatides & Woo) in sharp mode, quarter-voxel jittered
+sampling in smooth mode, plus maximum-intensity projection. All volumes share
+the threshold/density/gamma sliders. three.js stays on r147, the last release
+with classic (non-module) scripts, which load without import maps in
+CSP-restricted pages such as claude.ai artifacts.
+
+Tests (`tests/`) mirror the modules: `test_display.py` checks Scene layers
+without any HTML, `test_scene.py` the encodings, `test_browser.py` the HTML.
 
 **Data shape is columnar, not a nested record schema**, and it directly mirrors
 the branch layout of the SNO+ `imaging_reco` ntuple (see `load_event`):
 - Tracks: a flat `pdg` array (one entry per track) plus jagged awkward arrays
   `pos_x`, `pos_y`, `pos_z`, `time`, `deposited_energy` — outer index = track,
-  inner index = step. `plot_tracks` and `plot_voxels` both take these same
+  inner index = step. `add_tracks` and `add_deposits` both take these same
   columns (mirrors ROOT's `trackPDG`/`trackPosX/Y/Z`/`trackTime`/`trackDep`
   branches, which are `vector<vector<T>>` aligned by track index with no
   separate track-id needed).
@@ -57,14 +84,11 @@ the branch layout of the SNO+ `imaging_reco` ntuple (see `load_event`):
 
 `load_event(path, index)` is the bridge from a ROOT file to this format: it opens
 one event with `uproot` and returns `(tracks, vertices)` as two kwargs dicts, so
-call sites look like `plot_tracks(**tracks, t_min=..., t_max=...)`.
+call sites look like `disp.add_tracks(**tracks, t_min=..., t_max=...)`.
 
-Both `plot_tracks` and `plot_truth_vertices` color by time using the same
-`t_min`/`t_max` bounds passed in by the caller (computed once from the flattened
-step/vertex times) — this keeps their colorbars on a shared scale. `plot_voxels`
-bins per-step deposited energy into a 3D grid and renders it as a *single*
-batched `go.Mesh3d` (via the lower-level `voxel_mesh` helper) rather than one
-mesh per voxel, for render performance.
+`add_tracks` and `add_vertices` colour by time over the caller's `t_min`/`t_max`
+and share one "Time (ns)" colour bar (a later call replaces it), so pass the same
+bounds to both.
 
 `particle_name(pdg)` degrades gracefully: it uses the optional `particle` package
 for PDG-to-name lookups if installed (`uv sync --extra particle`), otherwise
@@ -73,6 +97,8 @@ falls back to `f"PDG {pdg}"`. Don't assume `particle` is present.
 `examples/synthetic_event.ipynb` is the canonical worked example and doubles as
 a manual integration test: it builds a fake event with the columnar schema above,
 then loads and plots one real event via `load_event` from a SNO+ MC ntuple at
-`/data/snoplus2/degraw/imaging_reco/mc/electron_uniform_fiducial/root/job_0.ntuple.root`.
-When changing any plotting function's signature or the columnar schema, update
-this notebook and re-execute it to confirm the change works end-to-end.
+`/data/snoplus2/degraw/imaging_reco/mc/electron_uniform_fiducial/root/job_0.ntuple.root`,
+and ends with a toy reconstructed volume. When changing the `EventDisplay` API, the
+spec format or the columnar schema, update this notebook and re-execute it to
+confirm the change works end-to-end; check the JS side in a real browser (WebGL)
+since pytest only covers the Python side.
