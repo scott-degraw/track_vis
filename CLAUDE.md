@@ -20,6 +20,10 @@ ruff check . && ruff format .
 # Run tests (Python side: display, scene encoding, HTML output, voxels, colours)
 uv run pytest
 
+# Browser smoke test of the JS renderer (skipped unless Chromium is installed)
+uv run playwright install chromium
+TRACK_VIS_REQUIRE_BROWSER=1 uv run pytest tests/test_render_in_browser.py
+
 # Run the example notebook end-to-end and write outputs in place
 uv run jupyter nbconvert --to notebook --execute --inplace examples/synthetic_event.ipynb
 

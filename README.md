@@ -111,3 +111,15 @@ uv run jupyter notebook examples/synthetic_event.ipynb
 ```bash
 uv run pytest
 ```
+
+`tests/test_render_in_browser.py` also opens a page in headless Chromium and
+checks that the JavaScript renderer draws without errors. It is skipped unless
+Playwright's browser is installed:
+
+```bash
+uv run playwright install chromium
+TRACK_VIS_REQUIRE_BROWSER=1 uv run pytest tests/test_render_in_browser.py
+```
+
+CI (`.github/workflows/ci.yml`) runs ruff, pytest on Python 3.10 and 3.13, and
+this browser test.
