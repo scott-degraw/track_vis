@@ -54,6 +54,29 @@ _CUBE_FACES = np.array(
 )
 
 
+# Outward normal of each cube face, matching the triangle pairs in _CUBE_FACES.
+_FACE_NORMALS = np.array([[0, 0, -1], [0, 0, 1], [0, -1, 0], [0, 1, 0], [-1, 0, 0], [1, 0, 0]])
+
+
+def _exposed_faces(centers: np.ndarray, level: np.ndarray, voxel_size: float) -> np.ndarray:
+    """Return an (N, 6) mask of the faces to draw for touching full-size cubes.
+
+    A face is hidden when the neighbouring voxel across it is drawn at the same
+    or a higher opacity level: two coplanar faces would z-fight and double the
+    opacity, and same-level neighbours read as one continuous region. Between
+    levels, only the more opaque cube draws the shared face.
+    """
+    idx = np.rint((centers - centers.min(axis=0)) / voxel_size).astype(np.int64)
+    lookup = {tuple(v): lv for v, lv in zip(idx.tolist(), level.tolist())}
+    mask = np.ones((len(centers), 6), dtype=bool)
+    for f, normal in enumerate(_FACE_NORMALS):
+        for n, (v, lv) in enumerate(zip((idx + normal).tolist(), level.tolist())):
+            other = lookup.get(tuple(v))
+            if other is not None and other >= lv:
+                mask[n, f] = False
+    return mask
+
+
 def time_colorscale(times: np.ndarray, t_min: float, t_max: float, colorscale: str = COLORSCALE) -> list:
     """Map an array of times to a list of CSS colour strings via *colorscale*."""
     t_range = t_max - t_min or 1.0
@@ -72,6 +95,7 @@ def voxel_mesh(
     opacity: float = 0.35,
     name: str = "Voxels",
     hover_texts: np.ndarray | None = None,
+    face_mask: np.ndarray | None = None,
 ) -> go.Mesh3d:
     """Return a single batched Mesh3d covering all voxel cubes.
 
@@ -83,12 +107,19 @@ def voxel_mesh(
         (N,) per-voxel scalar used for colouring.
     voxel_size:
         Edge length of each cube.
+    face_mask:
+        Optional (N, 6) bool array of which cube faces to draw, in the order
+        -z, +z, -y, +y, -x, +x (see ``_FACE_NORMALS``). Default: all faces.
     """
     n = len(centers)
     hs = voxel_size / 2
     verts = (centers[:, np.newaxis, :] + _CUBE_VERT_OFFSETS[np.newaxis] * hs).reshape(-1, 3)
     face_offsets = (np.arange(n) * 8)[:, np.newaxis, np.newaxis]
-    faces = (_CUBE_FACES[np.newaxis] + face_offsets).reshape(-1, 3)
+    faces = _CUBE_FACES[np.newaxis] + face_offsets
+    if face_mask is not None:
+        # Each cube face is two consecutive triangles in _CUBE_FACES.
+        faces = faces[np.repeat(np.asarray(face_mask, dtype=bool), 2, axis=1)]
+    faces = faces.reshape(-1, 3)
     intensity = np.repeat(energies, 8)
 
     kwargs = {}
@@ -127,7 +158,7 @@ def voxel_cubes(
     colorscale: str = VOXEL_COLORSCALE,
     colorbar_title: str = "Energy (MeV)",
     colorbar_x: float = 1.12,
-    fill: float = 0.92,
+    fill: float = 1.0,
     name: str = "Voxels",
     hover_texts: np.ndarray | None = None,
 ) -> list:
@@ -162,8 +193,10 @@ def voxel_cubes(
     gamma:
         Opacity curve; >1 fades low-energy voxels more strongly.
     fill:
-        Fraction of the voxel pitch each cube is drawn at, leaving small gaps
-        so neighbouring cubes stay distinguishable.
+        Fraction of the voxel pitch each cube is drawn at. At 1.0 (default)
+        cubes touch with no gaps, and faces shared with an equally or more
+        opaque neighbour are hidden (see ``_exposed_faces``). Below 1.0 every
+        face is drawn, leaving gaps between cubes.
     """
     centers = np.asarray(centers, dtype=float)
     energies = np.asarray(energies, dtype=float)
@@ -180,6 +213,7 @@ def voxel_cubes(
     u = np.clip(energies / e_max, 0.0, 1.0)
     level = np.minimum((u * n_levels).astype(int), n_levels - 1)
     o_min, o_max = opacity_range
+    face_mask = _exposed_faces(centers, level, voxel_size) if fill >= 1.0 else None
 
     traces = []
     for k in range(n_levels):
@@ -198,6 +232,7 @@ def voxel_cubes(
             opacity=o_min + (o_max - o_min) * u_k**gamma,
             name=name,
             hover_texts=hover_texts[sel] if hover_texts is not None else None,
+            face_mask=face_mask[sel] if face_mask is not None else None,
         )
         mesh.update(
             showscale=False,
