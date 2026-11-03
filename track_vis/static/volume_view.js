@@ -233,7 +233,9 @@
     const span = Math.max(size.x, size.y, size.z);
     const step = [50, 100, 200, 250, 500, 1000, 2000, 5000].find((s) => span / s <= 8) || 10000;
     const tickLen = Math.max(0.02 * span, 0.3 * v.voxel_size);
-    const tickLabels = [];  // [Vector3 position, element]
+    // Labels are placed in screen space each frame: pushed out from the box,
+    // perpendicular to the projected axis, by their own size plus a margin.
+    const axesInfo = [];
     const labelLayer = el("div", "position:absolute;inset:0;pointer-events:none;overflow:hidden");
     const axisDefs = [
       { a: "x", color: 0xd62728, base: [null, lo.y, lo.z], out: [0, -1, 0] },
@@ -244,32 +246,57 @@
       const k = "xyz".indexOf(ax.a);
       const out = new THREE.Vector3(...ax.out).normalize();
       const at = (val) => new THREE.Vector3(...ax.base.map((b, i) => (i === k ? val : b)));
-      const pts = [at(lo.getComponent(k)), at(hi.getComponent(k))];
+      const info = { p0: at(lo.getComponent(k)), p1: at(hi.getComponent(k)), ticks: [] };
+      const pts = [info.p0, info.p1];
       for (let t = Math.ceil(lo.getComponent(k) / step) * step; t <= hi.getComponent(k) + 1e-6; t += step) {
         const p = at(t);
-        pts.push(p, p.clone().addScaledVector(out, tickLen));
-        const lab = el("div", "position:absolute;transform:translate(-50%,-50%);font-size:11px;color:#444;white-space:nowrap;font-variant-numeric:tabular-nums", String(Math.round(t)));
+        const tip = p.clone().addScaledVector(out, tickLen);
+        pts.push(p, tip);
+        const lab = el("div", "position:absolute;font-size:11px;color:#444;white-space:nowrap;font-variant-numeric:tabular-nums", String(Math.round(t)));
         labelLayer.appendChild(lab);
-        tickLabels.push([p.clone().addScaledVector(out, tickLen * 2.6), lab]);
+        info.ticks.push({ p, tip, lab });
       }
-      const mid = at(0.5 * (lo.getComponent(k) + hi.getComponent(k))).addScaledVector(out, tickLen * 5.5);
-      const title = el("div", "position:absolute;transform:translate(-50%,-50%);font-size:12px;font-weight:600;white-space:nowrap", `${ax.a} (mm)`);
-      title.style.color = "#" + ax.color.toString(16).padStart(6, "0");
-      labelLayer.appendChild(title);
-      tickLabels.push([mid, title]);
+      info.title = el("div", "position:absolute;font-size:12px;font-weight:600;white-space:nowrap", `${ax.a} (mm)`);
+      info.title.style.color = "#" + ax.color.toString(16).padStart(6, "0");
+      labelLayer.appendChild(info.title);
+      axesInfo.push(info);
       const geo = new THREE.BufferGeometry().setFromPoints(pts);
       scene.add(new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: ax.color })));
     }
     root.appendChild(labelLayer);
-    const projected = new THREE.Vector3();
+    const scr = (p, w, h) => {
+      const q = p.clone().project(camera);
+      return { x: ((q.x + 1) / 2) * w, y: ((1 - q.y) / 2) * h, z: q.z };
+    };
+    // Put a label's nearest edge `gap` px from (x, y) along unit direction n.
+    const put = (lab, x, y, n, gap) => {
+      const bw = lab.offsetWidth, bh = lab.offsetHeight;
+      const r = 0.5 * (Math.abs(n.x) * bw + Math.abs(n.y) * bh);
+      lab.style.left = x + n.x * (gap + r) - bw / 2 + "px";
+      lab.style.top = y + n.y * (gap + r) - bh / 2 + "px";
+      return gap + 2 * r;
+    };
     function placeLabels() {
       const w = root.clientWidth, h = root.clientHeight;
-      for (const [p, lab] of tickLabels) {
-        projected.copy(p).project(camera);
-        const behind = projected.z > 1;
-        lab.style.display = behind ? "none" : "";
-        lab.style.left = ((projected.x + 1) / 2) * w + "px";
-        lab.style.top = ((1 - projected.y) / 2) * h + "px";
+      const c = scr(centre, w, h);
+      for (const ax of axesInfo) {
+        const a = scr(ax.p0, w, h), b = scr(ax.p1, w, h);
+        let dx = b.x - a.x, dy = b.y - a.y;
+        const L = Math.hypot(dx, dy) || 1;
+        let n = { x: -dy / L, y: dx / L };
+        const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+        if (n.x * (mx - c.x) + n.y * (my - c.y) < 0) n = { x: -n.x, y: -n.y };
+        let reach = 0;
+        for (const t of ax.ticks) {
+          const p = scr(t.p, w, h), q = scr(t.tip, w, h);
+          const hide = p.z > 1;
+          t.lab.style.display = hide ? "none" : "";
+          if (hide) continue;
+          // start past whichever end of the tick is further out along n
+          const off = Math.max(0, (q.x - p.x) * n.x + (q.y - p.y) * n.y);
+          reach = Math.max(reach, off + put(t.lab, p.x, p.y, n, off + 4));
+        }
+        put(ax.title, mx, my, n, reach + 6);
       }
     }
 
