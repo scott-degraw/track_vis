@@ -1,8 +1,9 @@
 // track_vis browser renderer: draws one scene with three.js.
 //
 // Input: the JSON from Scene.to_json() in track_vis/scene.py, which documents
-// every field. Python calls TrackVis.mount(elementId, scene, scriptUrls) (see
-// track_vis/browser.py). mount waits until the element is near the viewport
+// every field. Python calls TrackVis.mount(elementId, scene, scriptUrls), or
+// TrackVis.mountMenu(elementId, scenes, labels, scriptUrls) for a drop-down of
+// scenes (see track_vis/browser.py). mount waits until the element is near the viewport
 // (browsers cap live WebGL contexts at ~16 per page), loads three.js r147 from
 // scriptUrls if given (else it must already be on the page), then calls render().
 //
@@ -562,8 +563,12 @@
     spec.lines.forEach((ln) => addLines(ctx, ln));
     spec.points.forEach((pt) => addPoints(ctx, pt));
 
-    if (ctx.bounds.isEmpty()) ctx.bounds.set(new THREE.Vector3(-500, -500, -500), new THREE.Vector3(500, 500, 500));
-    if (!ctx.volumes.length) {
+    if (spec.bounds) {
+      // A fixed view box from Python: layers outside it are still drawn.
+      ctx.bounds.set(new THREE.Vector3(...spec.bounds[0]), new THREE.Vector3(...spec.bounds[1]));
+    } else if (ctx.bounds.isEmpty()) {
+      ctx.bounds.set(new THREE.Vector3(-500, -500, -500), new THREE.Vector3(500, 500, 500));
+    } else if (!ctx.volumes.length) {
       // Lines and markers only: pad so they do not sit on the box edges.
       const size = ctx.bounds.getSize(new THREE.Vector3());
       ctx.bounds.expandByScalar(0.04 * Math.max(size.x, size.y, size.z) + 1);
@@ -602,10 +607,22 @@
     };
     addPanel(ctx, resetCamera);  // after ctx.draw exists: controls apply their initial state
     controls.addEventListener("change", () => { hideHover(); ctx.draw(); });
-    new ResizeObserver(() => { resize(); ctx.draw(); }).observe(root);
+    const resizeObserver = new ResizeObserver(() => { resize(); ctx.draw(); });
+    resizeObserver.observe(root);
+    // Free the GPU context and empty root, so another scene can be drawn there.
+    ctx.dispose = () => {
+      resizeObserver.disconnect();
+      controls.dispose();
+      ctx.scene.traverse((o) => { o.geometry?.dispose(); o.material?.dispose(); });
+      ctx.volumes.forEach((v) => v.tex.dispose());
+      renderer.dispose();
+      renderer.forceContextLoss();
+      root.replaceChildren();
+      delete root._trackvis;
+    };
     resize();
     ctx.draw();
-    root._trackvis = ctx;  // for debugging from the console
+    root._trackvis = ctx;  // for debugging from the console, and for dispose
   }
 
   // ---------------------------------------------------------------- mount
@@ -624,14 +641,14 @@
     return scriptsLoaded;
   }
 
-  function mount(id, spec, urls) {
-    const root = document.getElementById(id);
+  // Run draw() once three.js is loaded and root is near the viewport.
+  function whenVisible(root, urls, draw) {
     let started = false;
     const start = () => {
       if (started) return;
       started = true;
       loadScripts(urls)
-        .then(() => render(root, spec))
+        .then(draw)
         .catch((e) => { root.textContent = `track_vis: ${e.message}`; });
     };
     if (!("IntersectionObserver" in window)) return start();
@@ -640,5 +657,30 @@
     }, { rootMargin: "300px" }).observe(root);
   }
 
-  window.TrackVis = { mount, render };
+  function mount(id, spec, urls) {
+    const root = document.getElementById(id);
+    whenVisible(root, urls, () => render(root, spec));
+  }
+
+  // Several scenes sharing one view, picked from a drop-down menu. Only the
+  // shown scene holds a WebGL context; switching disposes it and draws the next.
+  function mountMenu(id, specs, labels, urls) {
+    const root = document.getElementById(id);
+    const select = el("select", "display:block;max-width:100%;margin:0 0 6px;font:13px system-ui,-apple-system,Segoe UI,sans-serif");
+    labels.forEach((label, i) => {
+      const option = el("option", "", label);
+      option.value = String(i);
+      select.appendChild(option);
+    });
+    const view = el("div");
+    root.replaceChildren(select, view);
+    const show = (i) => {
+      if (view._trackvis) view._trackvis.dispose();
+      render(view, specs[i]);
+    };
+    select.addEventListener("change", () => show(Number(select.value)));
+    whenVisible(root, urls, () => show(0));
+  }
+
+  window.TrackVis = { mount, mountMenu, render };
 })();

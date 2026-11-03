@@ -5,7 +5,7 @@ import re
 
 import pytest
 
-from track_vis import EventDisplay
+from track_vis import DisplayMenu, EventDisplay
 from track_vis.browser import CDN_URLS
 
 
@@ -46,3 +46,15 @@ def test_bad_lib_and_standalone_page(tmp_path):
     d.write_html(str(path))
     text = path.read_text()
     assert text.startswith("<!doctype html>") and "<title>A &amp; B</title>" in text
+
+
+def test_menu_fragment_mounts_all_scenes(tracks):
+    displays = [EventDisplay(title="a").add_tracks(**tracks), EventDisplay(title="b")]
+    out = DisplayMenu(displays, labels=["first", "second"]).to_html()
+    args = re.search(r"TrackVis\.mountMenu\((.*)\);</script>", out).group(1)
+    decoder = json.JSONDecoder()
+    _, end = decoder.raw_decode(args)  # element id
+    scenes, end = decoder.raw_decode(args, end + len(", "))
+    labels, _ = decoder.raw_decode(args, end + len(", "))
+    assert [s["title"] for s in scenes] == ["a", "b"]
+    assert labels == ["first", "second"]

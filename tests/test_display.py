@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from track_vis import EventDisplay
+from track_vis import DisplayMenu, EventDisplay
 
 
 def test_volume_from_sparse_voxels_is_padded():
@@ -59,3 +59,20 @@ def test_input_errors():
         d.add_line(np.zeros((3, 3)), hover_text=["a"])
     with pytest.raises(ValueError, match="hover_text"):
         d.add_points(np.zeros((2, 3)), hover_text=["a"])
+
+
+def test_bounds_set_the_view_box():
+    d = EventDisplay(bounds=[[-1, -2, -3], [1, 2, 3]])
+    assert d.scene.to_json()["bounds"] == [[-1, -2, -3], [1, 2, 3]]
+    assert EventDisplay().scene.to_json()["bounds"] is None
+    with pytest.raises(ValueError):
+        EventDisplay(bounds=[[0, 0, 0], [0, 1, 1]])
+
+
+def test_menu_labels_default_to_titles():
+    menu = DisplayMenu([EventDisplay(title="a"), EventDisplay()])
+    assert menu.labels == ["a", "display 1"]
+    with pytest.raises(ValueError):
+        DisplayMenu([EventDisplay()], labels=["a", "b"])
+    with pytest.raises(ValueError):
+        DisplayMenu([])

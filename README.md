@@ -64,7 +64,7 @@ per vertex. Units: mm, ns, MeV.
 
 | Method / function | Description |
 | --- | --- |
-| `EventDisplay(title, width, height, threshold, density, gamma, smooth)` | A scene. The volume style arguments set the initial slider values. Every `add_*` returns the display, so calls chain. |
+| `EventDisplay(title, width, height, threshold, density, gamma, smooth, bounds)` | A scene. The volume style arguments set the initial slider values; `bounds=[[x0, y0, z0], [x1, y1, z1]]` fixes the view box (default: fit all layers). Every `add_*` returns the display, so calls chain. |
 | `.add_tracks(pdg, pos_x, pos_y, pos_z, time, deposited_energy, t_min, t_max)` | Truth tracks coloured by step time, one toggleable layer per species. |
 | `.add_vertices(pdg, x, y, z, t, energy, t_min, t_max)` | Truth vertex markers coloured by time, one layer per species. Use the same `t_min`/`t_max` as the tracks to share the time colour bar. |
 | `.add_deposits(pos_x, pos_y, pos_z, deposited_energy, voxel_size=100)` | Bins per-step deposits into cubes aligned to multiples of `voxel_size` and adds them as a volume. |
@@ -73,6 +73,7 @@ per vertex. Units: mm, ns, MeV.
 | `.add_points(points, name, color= / values=, size=)` | Round markers. |
 | `.to_html(lib="cdn")`, `.write_html(path, lib="inline")` | HTML output. `lib="cdn"` loads three.js r147 from a pinned jsDelivr URL; `lib="inline"` embeds the copy vendored in `track_vis/js/vendor` (MIT). |
 | `.scene` | The `Scene` built so far: plain dataclasses of NumPy arrays (see `scene.py`). |
+| `DisplayMenu(displays, labels)` | Several displays in one view with a drop-down to pick one (e.g. one per event). Only the shown one holds a WebGL context. Same `to_html`/`write_html`. |
 | `load_event(path, index)` | Opens an `imaging_reco` ntuple and returns `(tracks, vertices)` kwargs dicts. |
 | `voxelize(centers, values, voxel_size)`, `bin_deposits(points, energies, voxel_size)` | Dense `(grid, origin)` from sparse voxels or point deposits. |
 | `sample_colorscale(name, u)`, `COLORSCALES` | Built-in colour scales: plasma, viridis, inferno, magma, cividis, turbo. |
@@ -88,7 +89,7 @@ Python without knowing JavaScript.
 
 | Module | Role |
 | --- | --- |
-| `display.py` | `EventDisplay`: turns tracks, vertices, deposits and images into scene layers. |
+| `display.py` | `EventDisplay`: turns tracks, vertices, deposits and images into scene layers. `DisplayMenu`: a drop-down of displays. |
 | `scene.py` | The scene dataclasses and their JSON encoding: the contract with the browser. |
 | `browser.py` | Wraps a scene in HTML. The only Python module that touches JavaScript. |
 | `voxels.py`, `colors.py`, `io.py` | Grids, colour scales, ntuple reading. |

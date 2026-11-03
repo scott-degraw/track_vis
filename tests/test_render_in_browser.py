@@ -16,7 +16,7 @@ import os
 import numpy as np
 import pytest
 
-from track_vis import EventDisplay
+from track_vis import DisplayMenu, EventDisplay
 
 REQUIRE = os.environ.get("TRACK_VIS_REQUIRE_BROWSER") == "1"
 SOFTWARE_GL = ["--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader"]
@@ -83,4 +83,23 @@ def test_page_renders_without_errors(browser, tmp_path, tracks, vertices):
         }"""
     )
     assert coloured > 1000
+    page.close()
+
+
+def test_menu_switches_scenes(browser, tmp_path, tracks, vertices):
+    path = tmp_path / "menu.html"
+    first = _display(tracks, vertices)
+    second = EventDisplay(title="second", bounds=[[-100, -100, -100], [100, 100, 100]]).add_vertices(**vertices)
+    DisplayMenu([first, second], ["one", "two"]).write_html(str(path))
+
+    page = browser.new_page(viewport={"width": 960, "height": 760})
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(path.as_uri())
+    page.wait_for_function("document.querySelector('.track-vis div')?._trackvis !== undefined", timeout=15000)
+    assert page.locator(".track-vis canvas").count() == 1
+    page.select_option(".track-vis select", "1")
+    page.wait_for_function("document.querySelector('.track-vis div')._trackvis?.spec.title === 'second'", timeout=15000)
+    assert page.locator(".track-vis canvas").count() == 1  # the first view was disposed
+    assert errors == []
     page.close()

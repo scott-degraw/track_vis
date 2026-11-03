@@ -10,7 +10,7 @@ ntuples.
 
 Package layout (Python unless noted):
 
-- ``display.py``: `EventDisplay`, the user-facing API.
+- ``display.py``: `EventDisplay`, the user-facing API, and `DisplayMenu`.
 - ``scene.py``: `Scene` and its layers, the data handed to the browser.
 - ``browser.py``: wraps a scene in HTML; the only module that touches JavaScript.
 - ``voxels.py``: dense grids from sparse voxels or point deposits.
@@ -20,13 +20,14 @@ Package layout (Python unless noted):
 """
 
 from track_vis.colors import COLORSCALES, colorscale_stops, sample_colorscale
-from track_vis.display import EventDisplay
+from track_vis.display import DisplayMenu, EventDisplay
 from track_vis.io import load_event, particle_name
 from track_vis.scene import Scene
 from track_vis.voxels import bin_deposits, voxelize
 
 __all__ = [
     "COLORSCALES",
+    "DisplayMenu",
     "EventDisplay",
     "Scene",
     "bin_deposits",

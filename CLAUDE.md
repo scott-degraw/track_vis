@@ -42,7 +42,8 @@ next committed — that's the hook doing its job, not a bug.
 A small three.js event-display library for 3D SNO+ events. The Python and
 JavaScript halves are kept apart so the Python can be read on its own:
 
-- `track_vis/display.py`: `EventDisplay`, the user API. Turns physics inputs
+- `track_vis/display.py`: `EventDisplay`, the user API, and `DisplayMenu` (a
+  drop-down of displays sharing one view). Turns physics inputs
   into `Scene` layers (colours, species grouping, hover text). No JSON or JS.
 - `track_vis/scene.py`: `Scene`, `VolumeLayer`, `LineLayer`, `PointLayer`,
   `Colorbar`, `VolumeStyle` dataclasses holding NumPy data, plus `to_json()`
@@ -50,7 +51,8 @@ JavaScript halves are kept apart so the Python can be read on its own:
   the JS reads is documented here.
 - `track_vis/browser.py`: the only Python module that touches JavaScript.
   Wraps a scene in an HTML fragment (`scene_html`) or page (`page_html`):
-  the renderer script, a div, and `TrackVis.mount(id, scene_json, urls)`.
+  the renderer script, a div, and `TrackVis.mount(id, scene_json, urls)`
+  (`menu_html` and `TrackVis.mountMenu` for a `DisplayMenu`).
 - `track_vis/voxels.py` (`voxelize`, `bin_deposits`), `colors.py` (colour
   scales, no Plotly), `io.py` (`load_event`, `particle_name`).
 - `track_vis/js/`: `event_display.js` (the renderer) and `vendor/` (three.js

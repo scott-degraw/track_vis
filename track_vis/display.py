@@ -111,6 +111,11 @@ class EventDisplay:
     smooth : bool, optional
         If True, start with trilinear interpolation instead of sharp voxel
         cubes. Default is False.
+    bounds : array_like, shape (2, 3), optional
+        Fixed view box ``[[x_min, y_min, z_min], [x_max, y_max, z_max]]``
+        in mm, e.g. to give several displays the same view or to keep far
+        away hidden layers from shrinking the event. Default is None, which
+        fits the box to all layers.
 
     Attributes
     ----------
@@ -127,12 +132,18 @@ class EventDisplay:
         density: float = 2.0,
         gamma: float = 2.0,
         smooth: bool = False,
+        bounds=None,
     ):
+        if bounds is not None:
+            bounds = np.asarray(bounds, dtype=float)
+            if bounds.shape != (2, 3) or np.any(bounds[1] <= bounds[0]):
+                raise ValueError("bounds must be [[x_min, y_min, z_min], [x_max, y_max, z_max]] with max > min")
         self.scene = Scene(
             title=title,
             width=int(width),
             height=int(height),
             style=VolumeStyle(threshold=threshold, density=density, gamma=gamma, smooth=smooth),
+            bounds=bounds,
         )
 
     # ------------------------------------------------------------------ volumes
@@ -619,3 +630,89 @@ class EventDisplay:
         """
         with open(path, "w", encoding="utf-8") as f:
             f.write(browser.page_html(self.scene, lib, page_title))
+
+
+class DisplayMenu:
+    """
+    Several event displays in one view, chosen from a drop-down menu.
+
+    Use it to page through events without one WebGL view per event: only the
+    display on show is drawn, so a page can hold many menus.
+
+    Parameters
+    ----------
+    displays : list of EventDisplay
+        The displays, in menu order. The first is shown at the start.
+    labels : list of str, optional
+        Menu entry for each display. Default is each display's title.
+
+    Attributes
+    ----------
+    displays : list of EventDisplay
+        The displays, in menu order.
+    labels : list of str
+        The menu entries.
+
+    Raises
+    ------
+    ValueError
+        If `displays` is empty or `labels` has the wrong length.
+    """
+
+    def __init__(self, displays: list[EventDisplay], labels: list[str] | None = None):
+        if not displays:
+            raise ValueError("DisplayMenu needs at least one display")
+        if labels is None:
+            labels = [d.scene.title or f"display {i}" for i, d in enumerate(displays)]
+        if len(labels) != len(displays):
+            raise ValueError("labels needs one entry per display")
+        self.displays = list(displays)
+        self.labels = [str(label) for label in labels]
+
+    def to_html(self, lib: str = "cdn") -> str:
+        """
+        Return an HTML fragment with the menu and the view.
+
+        Parameters
+        ----------
+        lib : {"cdn", "inline"}, optional
+            How three.js is included (see `EventDisplay.to_html`). Default
+            is "cdn".
+
+        Returns
+        -------
+        str
+            The HTML fragment.
+
+        Raises
+        ------
+        ValueError
+            If `lib` is not "cdn" or "inline".
+        """
+        return browser.menu_html([d.scene for d in self.displays], self.labels, lib)
+
+    def _repr_html_(self) -> str:
+        """Render in Jupyter and Quarto (three.js from the CDN)."""
+        return self.to_html()
+
+    def write_html(self, path: str, lib: str = "inline", page_title: str | None = None) -> None:
+        """
+        Write the menu to a standalone HTML page.
+
+        Parameters
+        ----------
+        path : str
+            Output file path.
+        lib : {"inline", "cdn"}, optional
+            How three.js is included. Default is "inline", so the page
+            works offline.
+        page_title : str, optional
+            Browser tab title. Default is the first menu entry.
+
+        Raises
+        ------
+        ValueError
+            If `lib` is not "cdn" or "inline".
+        """
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(browser.page(self.to_html(lib), page_title or self.labels[0]))

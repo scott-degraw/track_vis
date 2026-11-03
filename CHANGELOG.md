@@ -12,6 +12,8 @@ A rewrite on three.js. **Breaking:** the Plotly functions are gone.
 - Axes with mm tick labels, per-layer toggles, hover read-outs, colour bars.
 - Pages embed in Jupyter, Quarto and claude.ai artifacts; `lib="inline"`
   makes a page that works offline.
+- `DisplayMenu` pages through several displays (e.g. events) in one view, and
+  `EventDisplay(bounds=...)` fixes the view box.
 - Plotly dependency removed.
 - CI: ruff, pytest and a headless-browser smoke test.
 
