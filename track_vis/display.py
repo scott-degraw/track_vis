@@ -1,78 +1,39 @@
 """
 display.py
 
-Interactive 3D event displays rendered with three.js in the browser.
+`EventDisplay`: the user-facing API for building 3D event displays.
 
-``EventDisplay`` collects layers (voxel volumes, polylines, markers) and turns
-them into one self-contained HTML fragment. Voxel images are uploaded to the
-GPU as 3D textures and ray-marched per pixel, so every voxel has its own
-opacity, there is no triangle sorting, and an image costs one byte per voxel.
+An `EventDisplay` turns physics inputs (truth tracks, vertices, deposits,
+reconstructed voxel images, fitted lines) into the layers of a `Scene`
+(see ``scene.py``), choosing colours, grouping by particle species and
+writing hover text. It contains no JavaScript or HTML: drawing is delegated to
+``browser.py``, which hands the scene to the browser renderer.
 
-In Jupyter an ``EventDisplay`` renders itself when it is the last expression
-of a cell (``_repr_html_``); the same output works in a rendered Quarto page.
-``to_html`` returns the fragment and ``write_html`` writes a standalone page.
-
-three.js r147 is loaded from a pinned jsDelivr URL (``lib="cdn"``, default)
-or embedded from the copy vendored in ``track_vis/static/vendor``
-(``lib="inline"``, ~660 kB, no network needed).
+In Jupyter an `EventDisplay` renders itself when it is the last expression
+of a cell; the same output works in a rendered Quarto page. `to_html` returns
+the HTML fragment and `write_html` writes a standalone page.
 
 Units: positions in mm, times in ns, energies in MeV.
 """
 
 from __future__ import annotations
 
-import base64
-import html
-import json
-import uuid
-from functools import cache
-from importlib import resources
-
 import awkward as ak
 import numpy as np
 
+from track_vis import browser
 from track_vis.colors import colorscale_stops, hex_to_rgb, sample_colorscale
 from track_vis.io import particle_name
-
-THREE_VERSION = "0.147.0"
-_VENDOR_FILES = [
-    ("three.min.js", "build/three.min.js"),
-    ("OrbitControls.js", "examples/js/controls/OrbitControls.js"),
-    ("LineSegmentsGeometry.js", "examples/js/lines/LineSegmentsGeometry.js"),
-    ("LineMaterial.js", "examples/js/lines/LineMaterial.js"),
-    ("LineSegments2.js", "examples/js/lines/LineSegments2.js"),
-]
-CDN_URLS = [f"https://cdn.jsdelivr.net/npm/three@{THREE_VERSION}/{path}" for _, path in _VENDOR_FILES]
+from track_vis.scene import Colorbar, LineLayer, PointLayer, Scene, VolumeLayer, VolumeStyle
+from track_vis.voxels import bin_deposits, voxelize
 
 TIME_COLORSCALE = "plasma"
 VOXEL_COLORSCALE = "plasma"
 TIME_COLORBAR_TITLE = "Time (ns)"
 
 
-@cache
-def _static(name: str) -> str:
-    return resources.files("track_vis").joinpath("static", name).read_text(encoding="utf-8")
-
-
-def _inline_script(name: str, once_key: str | None = None) -> str:
-    """A <script> holding a static file; with *once_key* it runs once per page."""
-    body = _static(name)
-    if once_key is not None:
-        flag = f"window[{json.dumps('__trackvis_' + once_key)}]"
-        body = f"if (!{flag}) {{ {flag} = true;\n{body}\n}}"
-    return f"<script>{body}</script>"
-
-
-def _script_json(value) -> str:
-    """JSON safe to embed in an HTML <script> (no "</" that could close the tag)."""
-    return json.dumps(value, separators=(",", ":")).replace("</", "<\\/")
-
-
-def _b64(a: np.ndarray, dtype=np.float32) -> str:
-    return base64.b64encode(np.ascontiguousarray(a, dtype=dtype).tobytes()).decode("ascii")
-
-
 def _to_numpy(a) -> np.ndarray:
+    """Convert an awkward or array-like input to a float NumPy array."""
     return np.asarray(ak.to_numpy(a) if isinstance(a, ak.Array) else a, dtype=float)
 
 
@@ -85,7 +46,7 @@ def _group_by_species(pdg) -> dict[str, list[int]]:
 
 
 def _colors(values, vmin, vmax, colorscale, color: str, n: int) -> np.ndarray:
-    """(n, 3) RGB: *values* sampled on *colorscale* over [vmin, vmax], else *color* for all."""
+    """Return (n, 3) RGB: `values` sampled on `colorscale` over [vmin, vmax], else `color` for all."""
     if values is None:
         return np.tile(hex_to_rgb(color), (n, 1))
     values = np.asarray(values, dtype=float)
@@ -94,78 +55,8 @@ def _colors(values, vmin, vmax, colorscale, color: str, n: int) -> np.ndarray:
     return sample_colorscale(colorscale, (values - lo) / ((hi - lo) or 1.0))
 
 
-def voxelize(centers: np.ndarray, values: np.ndarray, voxel_size: float) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Scatter per-voxel values at regular-grid centres into a dense array.
-
-    Values of repeated centres are summed.
-
-    Parameters
-    ----------
-    centers : array_like, shape (N, 3)
-        Voxel centre positions (mm), all on one grid of pitch `voxel_size`.
-    values : array_like, shape (N,)
-        Value of each voxel, e.g. reconstructed energy (MeV).
-    voxel_size : float
-        Grid pitch (mm).
-
-    Returns
-    -------
-    grid : numpy.ndarray, shape (nx, ny, nz)
-        Dense ``float32`` array indexed by x, y, z voxel index.
-    origin : numpy.ndarray, shape (3,)
-        Min corner (mm) of voxel ``[0, 0, 0]``.
-    """
-    centers = np.asarray(centers, dtype=float).reshape(-1, 3)
-    lo = centers.min(axis=0)
-    idx = np.rint((centers - lo) / voxel_size).astype(np.int64)
-    grid = np.zeros(idx.max(axis=0) + 1, dtype=np.float32)
-    np.add.at(grid, tuple(idx.T), np.asarray(values, dtype=np.float32))
-    return grid, lo - voxel_size / 2
-
-
-def bin_deposits(points: np.ndarray, energies: np.ndarray, voxel_size: float) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Sum point energy deposits into cubes aligned to multiples of `voxel_size`.
-
-    Deposits with zero or negative energy are ignored.
-
-    Parameters
-    ----------
-    points : array_like, shape (N, 3)
-        Deposit positions (mm).
-    energies : array_like, shape (N,)
-        Deposited energy at each point (MeV).
-    voxel_size : float
-        Cube edge length (mm).
-
-    Returns
-    -------
-    grid : numpy.ndarray, shape (nx, ny, nz)
-        Summed energy per cube, as ``float32``.
-    origin : numpy.ndarray, shape (3,)
-        Min corner (mm) of cube ``[0, 0, 0]``.
-
-    Raises
-    ------
-    ValueError
-        If no deposit has positive energy.
-    """
-    points = np.asarray(points, dtype=float).reshape(-1, 3)
-    energies = np.asarray(energies, dtype=float)
-    keep = energies > 0
-    if not keep.any():
-        raise ValueError("no positive deposits to bin")
-    keys = np.floor(points[keep] / voxel_size).astype(np.int64)
-    k0 = keys.min(axis=0)
-    idx = keys - k0
-    grid = np.zeros(idx.max(axis=0) + 1, dtype=np.float32)
-    np.add.at(grid, tuple(idx.T), energies[keep].astype(np.float32))
-    return grid, k0 * float(voxel_size)
-
-
 def _is_single_path(points) -> bool:
-    """True for one (N, 3) polyline, False for a list of them."""
+    """Return True for one (N, 3) polyline, False for a list of them."""
     if isinstance(points, np.ndarray):
         return points.ndim == 2
     first = next(iter(points), None)
@@ -173,7 +64,7 @@ def _is_single_path(points) -> bool:
 
 
 def _polyline_segments(paths: list[np.ndarray], colors: list[np.ndarray]) -> tuple[np.ndarray, np.ndarray]:
-    """Turn polylines (each (N, 3)) with per-point RGB into segment endpoint arrays."""
+    """Split polylines (each (N, 3), with per-point RGB) into segment end points, two rows per segment."""
     seg, col = [], []
     for p, c in zip(paths, colors):
         if len(p) < 2:
@@ -187,7 +78,7 @@ def _polyline_segments(paths: list[np.ndarray], colors: list[np.ndarray]) -> tup
 
 class EventDisplay:
     """
-    Build a 3D scene of voxel volumes, polylines and markers for three.js.
+    Build an interactive 3D display of an event.
 
     Every ``add_*`` method returns the display itself, so calls chain::
 
@@ -223,23 +114,8 @@ class EventDisplay:
 
     Attributes
     ----------
-    title : str or None
-        Title shown in the control panel.
-    width : int
-        Maximum view width in CSS pixels.
-    height : int
-        View height in CSS pixels.
-    volume_style : dict
-        Initial ``threshold``, ``density``, ``gamma`` and ``smooth`` values.
-    volumes : list of dict
-        Volume layers, as sent to the browser.
-    lines : list of dict
-        Polyline layers, as sent to the browser.
-    points : list of dict
-        Marker layers, as sent to the browser.
-    colorbars : list of dict
-        Extra colour bars (the shared time bar); volume bars come from
-        `volumes`.
+    scene : Scene
+        The layers added so far and the view settings (see ``scene.py``).
     """
 
     def __init__(
@@ -252,19 +128,12 @@ class EventDisplay:
         gamma: float = 2.0,
         smooth: bool = False,
     ):
-        self.title = title
-        self.width = int(width)
-        self.height = int(height)
-        self.volume_style = {
-            "threshold": float(threshold),
-            "density": float(density),
-            "gamma": float(gamma),
-            "smooth": bool(smooth),
-        }
-        self.volumes: list[dict] = []
-        self.lines: list[dict] = []
-        self.points: list[dict] = []
-        self.colorbars: list[dict] = []
+        self.scene = Scene(
+            title=title,
+            width=int(width),
+            height=int(height),
+            style=VolumeStyle(threshold=threshold, density=density, gamma=gamma, smooth=smooth),
+        )
 
     # ------------------------------------------------------------------ volumes
     def add_volume(
@@ -346,21 +215,17 @@ class EventDisplay:
             origin = origin - pad * voxel_size
         if e_max is None:
             e_max = float(grid.max())
-        e_max = float(e_max) or 1.0
-        q = np.clip(np.rint(grid / e_max * 255), 0, 255).astype(np.uint8)
-        self.volumes.append(
-            {
-                "name": name,
-                "shape": [int(n) for n in q.shape],
-                "origin": [float(o) for o in origin],
-                "voxel_size": float(voxel_size),
-                # WebGL 3D textures are x-fastest: Fortran order of an (x, y, z) array.
-                "data": base64.b64encode(q.tobytes(order="F")).decode("ascii"),
-                "e_max": e_max,
-                "colorscale": colorscale_stops(colorscale),
-                "colorbar_title": colorbar_title,
-                "visible": bool(visible),
-            }
+        self.scene.volumes.append(
+            VolumeLayer(
+                name=name,
+                grid=grid,
+                origin=origin,
+                voxel_size=float(voxel_size),
+                e_max=float(e_max) or 1.0,  # an all-zero image still needs a scale
+                colorscale=colorscale_stops(colorscale),
+                colorbar_title=colorbar_title,
+                visible=visible,
+            )
         )
         return self
 
@@ -484,23 +349,26 @@ class EventDisplay:
         lengths = [len(p) for p in paths]
         flat_values = None if values is None else np.concatenate([np.asarray(v, float) for v in values])
         rgb = _colors(flat_values, vmin, vmax, colorscale, color, sum(lengths))
-        seg, col = _polyline_segments(paths, np.split(rgb, np.cumsum(lengths)[:-1]))
-        layer = {
-            "name": name,
-            "segments": _b64(seg),
-            "colors": _b64(col),
-            "width": float(width),
-            "dashed": bool(dashed),
-            "dash": float(dash),
-            "visible": bool(visible),
-            "hover": None,
-        }
+        segments, segment_colors = _polyline_segments(paths, np.split(rgb, np.cumsum(lengths)[:-1]))
+        hover_points = None
         if hover_text is not None:
-            pts = np.concatenate(paths) if paths else np.zeros((0, 3))
-            if len(hover_text) != len(pts):
+            hover_points = np.concatenate(paths)
+            if len(hover_text) != len(hover_points):
                 raise ValueError("hover_text needs one entry per point")
-            layer["hover"] = {"points": _b64(pts), "text": list(map(str, hover_text))}
-        self.lines.append(layer)
+            hover_text = [str(t) for t in hover_text]
+        self.scene.lines.append(
+            LineLayer(
+                name=name,
+                segments=segments,
+                colors=segment_colors,
+                width=width,
+                dashed=dashed,
+                dash=dash,
+                hover_points=hover_points,
+                hover_text=hover_text,
+                visible=visible,
+            )
+        )
         return self
 
     def add_tracks(
@@ -628,18 +496,11 @@ class EventDisplay:
         """
         pts = np.asarray(points, dtype=float).reshape(-1, 3)
         rgb = _colors(values, vmin, vmax, colorscale, color, len(pts))
-        text = list(map(str, hover_text)) if hover_text is not None else [""] * len(pts)
+        text = [str(t) for t in hover_text] if hover_text is not None else [""] * len(pts)
         if len(text) != len(pts):
             raise ValueError("hover_text needs one entry per point")
-        self.points.append(
-            {
-                "name": name,
-                "positions": _b64(pts),
-                "colors": _b64(rgb),
-                "size": float(size),
-                "hover": text,
-                "visible": bool(visible),
-            }
+        self.scene.points.append(
+            PointLayer(name=name, positions=pts, colors=rgb, size=size, hover_text=text, visible=visible)
         )
         return self
 
@@ -707,49 +568,19 @@ class EventDisplay:
 
     def _time_colorbar(self, t_min: float, t_max: float, colorscale) -> None:
         """Set the shared time colour bar, replacing any earlier one."""
-        bar = {
-            "title": TIME_COLORBAR_TITLE,
-            "stops": colorscale_stops(colorscale),
-            "min": float(t_min),
-            "max": float(t_max),
-        }
-        self.colorbars = [b for b in self.colorbars if b["title"] != TIME_COLORBAR_TITLE] + [bar]
+        bar = Colorbar(TIME_COLORBAR_TITLE, colorscale_stops(colorscale), t_min, t_max)
+        self.scene.colorbars = [b for b in self.scene.colorbars if b.title != TIME_COLORBAR_TITLE] + [bar]
 
     # ------------------------------------------------------------------ output
-    def spec(self) -> dict:
-        """
-        Return the JSON-serialisable scene description passed to the browser.
-
-        Returns
-        -------
-        dict
-            Title, size, volume style, and the volume, line, marker and
-            colour bar layers.
-        """
-        return {
-            "title": self.title,
-            "width": self.width,
-            "height": self.height,
-            "volume_style": self.volume_style,
-            "volumes": self.volumes,
-            "lines": self.lines,
-            "points": self.points,
-            "colorbars": self.colorbars,
-        }
-
     def to_html(self, lib: str = "cdn") -> str:
         """
-        Return an HTML fragment (scripts and a container div) for this scene.
-
-        The display initialises when it scrolls near the viewport, since
-        browsers cap live WebGL contexts at about 16 per page.
+        Return an HTML fragment that draws this display.
 
         Parameters
         ----------
         lib : {"cdn", "inline"}, optional
-            "cdn" loads three.js from pinned jsDelivr URLs, once per page;
-            "inline" embeds the vendored copy so no network is needed.
-            Default is "cdn".
+            "cdn" loads three.js from pinned jsDelivr URLs; "inline" embeds
+            it so no network is needed. Default is "cdn".
 
         Returns
         -------
@@ -761,23 +592,7 @@ class EventDisplay:
         ValueError
             If `lib` is not "cdn" or "inline".
         """
-        if lib == "inline":
-            # Each vendored file runs only once per page, however many displays embed it.
-            parts = [_inline_script(f"vendor/{fname}", once_key=fname) for fname, _ in _VENDOR_FILES]
-            urls = None
-        elif lib == "cdn":
-            parts = []
-            urls = CDN_URLS
-        else:
-            raise ValueError("lib must be 'cdn' or 'inline'")
-        div_id = "track-vis-" + uuid.uuid4().hex[:12]
-        args = ", ".join(_script_json(a) for a in (div_id, self.spec(), urls))
-        parts += [
-            _inline_script("event_display.js"),
-            f'<div id="{div_id}" class="track-vis" style="min-height:{self.height}px"></div>',
-            f"<script>TrackVis.mount({args});</script>",
-        ]
-        return "\n".join(parts)
+        return browser.scene_html(self.scene, lib)
 
     def _repr_html_(self) -> str:
         """Render in Jupyter and Quarto (three.js from the CDN)."""
@@ -802,10 +617,5 @@ class EventDisplay:
         ValueError
             If `lib` is not "cdn" or "inline".
         """
-        title = html.escape(page_title or self.title or "track_vis event display")
         with open(path, "w", encoding="utf-8") as f:
-            f.write(
-                f'<!doctype html><html><head><meta charset="utf-8"><title>{title}</title>'
-                '<meta name="viewport" content="width=device-width, initial-scale=1"></head>'
-                f'<body style="margin:16px;background:#fff">{self.to_html(lib=lib)}</body></html>'
-            )
+            f.write(browser.page_html(self.scene, lib, page_title))

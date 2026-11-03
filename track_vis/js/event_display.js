@@ -1,12 +1,13 @@
-// track_vis event display: ray-marched voxel volumes, polylines and markers in three.js.
+// track_vis browser renderer: draws one scene with three.js.
 //
-// Entry point: TrackVis.mount(elementId, spec, scriptUrls). It waits until the
-// element is near the viewport (browsers cap live WebGL contexts at ~16 per
-// page), loads three.js r147 classic builds from scriptUrls if given (else they
-// must already be on window), then calls render(). The spec is built by
-// track_vis/display.py (EventDisplay.spec).
+// Input: the JSON from Scene.to_json() in track_vis/scene.py, which documents
+// every field. Python calls TrackVis.mount(elementId, scene, scriptUrls) (see
+// track_vis/browser.py). mount waits until the element is near the viewport
+// (browsers cap live WebGL contexts at ~16 per page), loads three.js r147 from
+// scriptUrls if given (else it must already be on the page), then calls render().
 //
 // Rendering is on demand: draw() runs only when the camera or a control changes.
+// See README.md in this folder for the file layout.
 (function () {
   if (window.TrackVis) return;
 
@@ -213,7 +214,8 @@
   const fmt = (x) => String(+x.toPrecision(10));
 
   // ---------------------------------------------------------------- scene layers
-  // Each builder adds objects to ctx.scene, grows ctx.bounds and pushes a layer
+  // One builder per list in the scene JSON (volumes, lines, points). Each adds
+  // objects to ctx.scene, grows ctx.bounds and pushes a layer
   // {name, objects, visible, hover?: {pos: Float32Array, text: string[]}}.
 
   function addVolume(ctx, v) {

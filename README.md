@@ -71,7 +71,8 @@ per vertex. Units: mm, ns, MeV.
 | `.add_volume(grid, origin, voxel_size)` or `.add_volume(centers=, energies=, voxel_size=)` | A voxel image, ray-marched on the GPU. `e_max` fixes the colour/opacity scale for comparing events. |
 | `.add_line(points, name, color= / values=, dashed=, width=)` | A polyline (or a list of them in one layer), in one colour or coloured by per-point values. |
 | `.add_points(points, name, color= / values=, size=)` | Round markers. |
-| `.to_html(lib="cdn")`, `.write_html(path, lib="inline")` | HTML output. `lib="cdn"` loads three.js r147 from a pinned jsDelivr URL; `lib="inline"` embeds the copy vendored in `track_vis/static/vendor` (MIT). |
+| `.to_html(lib="cdn")`, `.write_html(path, lib="inline")` | HTML output. `lib="cdn"` loads three.js r147 from a pinned jsDelivr URL; `lib="inline"` embeds the copy vendored in `track_vis/js/vendor` (MIT). |
+| `.scene` | The `Scene` built so far: plain dataclasses of NumPy arrays (see `scene.py`). |
 | `load_event(path, index)` | Opens an `imaging_reco` ntuple and returns `(tracks, vertices)` kwargs dicts. |
 | `voxelize(centers, values, voxel_size)`, `bin_deposits(points, energies, voxel_size)` | Dense `(grid, origin)` from sparse voxels or point deposits. |
 | `sample_colorscale(name, u)`, `COLORSCALES` | Built-in colour scales: plasma, viridis, inferno, magma, cividis, turbo. |
@@ -79,6 +80,19 @@ per vertex. Units: mm, ns, MeV.
 
 Browsers allow roughly 16 live WebGL contexts per page, so each display initialises
 only when it scrolls near the viewport.
+
+## Code layout
+
+The Python and JavaScript halves are separate; you can read and change the
+Python without knowing JavaScript.
+
+| Module | Role |
+| --- | --- |
+| `display.py` | `EventDisplay`: turns tracks, vertices, deposits and images into scene layers. |
+| `scene.py` | The scene dataclasses and their JSON encoding: the contract with the browser. |
+| `browser.py` | Wraps a scene in HTML. The only Python module that touches JavaScript. |
+| `voxels.py`, `colors.py`, `io.py` | Grids, colour scales, ntuple reading. |
+| `js/` | The JavaScript renderer and vendored three.js; see `js/README.md`. |
 
 ## Example
 

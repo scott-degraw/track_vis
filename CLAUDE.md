@@ -17,7 +17,7 @@ uv sync --group dev
 # Lint + format
 ruff check . && ruff format .
 
-# Run tests (Python side: spec building, binning, colour scales, HTML output)
+# Run tests (Python side: display, scene encoding, HTML output, voxels, colours)
 uv run pytest
 
 # Run the example notebook end-to-end and write outputs in place
@@ -35,39 +35,33 @@ next committed — that's the hook doing its job, not a bug.
 
 ## Architecture
 
-A small three.js event-display library for 3D SNO+ events. Python builds a JSON
-scene description; the browser draws it.
+A small three.js event-display library for 3D SNO+ events. The Python and
+JavaScript halves are kept apart so the Python can be read on its own:
 
-- `track_vis/display.py`: `EventDisplay`, the only scene type. `add_volume`,
-  `add_deposits`, `add_tracks`, `add_vertices`, `add_line`, `add_points` append
-  layers (each returns `self` for chaining); `spec()` is the JSON scene;
-  `to_html(lib=)` wraps it in a fragment of `<script>`s + a container div;
-  `_repr_html_` makes it render in Jupyter/Quarto; `write_html` writes a page.
-  Also `voxelize` / `bin_deposits` (sparse/points -> dense `(grid, origin)`).
-- `track_vis/static/event_display.js`: the renderer. `to_html` emits
-  `TrackVis.mount(id, spec, urls)`, which lazily loads three.js (from `urls`, or
-  already inlined when `urls` is null) and calls `render(el, spec)`. `render` is
-  split into layer builders (`addVolume`, `addLines`, `addPoints`), `addAxes`,
-  `addPanel`, `addColorbars` and `addHover`, sharing one `ctx` object.
-  Volumes are `uint8` 3D textures ray-marched in a GLSL3 fragment shader: exact
-  voxel traversal (Amanatides & Woo) in sharp mode, quarter-voxel jittered
-  sampling in smooth (trilinear) mode, plus a max-intensity mode. All volumes
-  share one set of style uniforms (threshold/density/gamma sliders). Lines are
-  `LineSegments2` (one per layer); markers are `THREE.Points` with a round
-  shader. Hover is done in JS (nearest projected hover point within 10 px, else
-  a CPU march for the brightest voxel). Axis tick labels are HTML placed in
-  screen space every frame. Rendering is on demand (no animation loop).
-- `track_vis/static/vendor/`: three.js r147 classic (non-module) builds, vendored
-  for `lib="inline"`; `lib="cdn"` loads the same files from pinned jsDelivr URLs.
-  r147 is the last release with `examples/js` classic scripts, which avoids ES
-  modules and import maps (kept simple for CSP-restricted pages such as
-  claude.ai artifacts). Don't bump it without switching to module loading.
-- `track_vis/colors.py`: built-in colour scales as hex stops (no Plotly).
-- `track_vis/io.py`: `load_event`, `particle_name`.
+- `track_vis/display.py`: `EventDisplay`, the user API. Turns physics inputs
+  into `Scene` layers (colours, species grouping, hover text). No JSON or JS.
+- `track_vis/scene.py`: `Scene`, `VolumeLayer`, `LineLayer`, `PointLayer`,
+  `Colorbar`, `VolumeStyle` dataclasses holding NumPy data, plus `to_json()`
+  and the array encodings. This is the contract with the browser: every field
+  the JS reads is documented here.
+- `track_vis/browser.py`: the only Python module that touches JavaScript.
+  Wraps a scene in an HTML fragment (`scene_html`) or page (`page_html`):
+  the renderer script, a div, and `TrackVis.mount(id, scene_json, urls)`.
+- `track_vis/voxels.py` (`voxelize`, `bin_deposits`), `colors.py` (colour
+  scales, no Plotly), `io.py` (`load_event`, `particle_name`).
+- `track_vis/js/`: `event_display.js` (the renderer) and `vendor/` (three.js
+  r147 classic builds, MIT). `js/README.md` explains its layout and which file
+  to edit for which change.
 
-Volume data is quantised to `uint8` relative to the volume's `e_max` and sent
-x-fastest (`tobytes(order="F")` of an `(nx, ny, nz)` array). Lines, markers and
-hover points are base64 `float32`.
+Volumes are `uint8` 3D textures ray-marched in a GLSL3 fragment shader: exact
+voxel traversal (Amanatides & Woo) in sharp mode, quarter-voxel jittered
+sampling in smooth mode, plus maximum-intensity projection. All volumes share
+the threshold/density/gamma sliders. three.js stays on r147, the last release
+with classic (non-module) scripts, which load without import maps in
+CSP-restricted pages such as claude.ai artifacts.
+
+Tests (`tests/`) mirror the modules: `test_display.py` checks Scene layers
+without any HTML, `test_scene.py` the encodings, `test_browser.py` the HTML.
 
 **Data shape is columnar, not a nested record schema**, and it directly mirrors
 the branch layout of the SNO+ `imaging_reco` ntuple (see `load_event`):
