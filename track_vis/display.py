@@ -30,6 +30,7 @@ from track_vis.voxels import bin_deposits, voxelize
 TIME_COLORSCALE = "plasma"
 VOXEL_COLORSCALE = "plasma"
 TIME_COLORBAR_TITLE = "Time (ns)"
+THEMES = ("light", "dark")
 
 
 def _to_numpy(a) -> np.ndarray:
@@ -99,7 +100,7 @@ class EventDisplay:
     Parameters
     ----------
     title : str, optional
-        Text shown at the top of the control panel. Default is None.
+        Text shown in the top-left corner of the view. Default is None.
     width : int, optional
         Maximum width of the view in CSS pixels. Default is 900.
     height : int, optional
@@ -121,6 +122,9 @@ class EventDisplay:
         in mm, e.g. to give several displays the same view or to keep far
         away hidden layers from shrinking the event. Default is None, which
         fits the box to all layers.
+    theme : {"light", "dark"}, optional
+        Background, axes and control colours. "dark" makes faint voxels and
+        the bright end of the colour scales stand out. Default is "light".
 
     Attributes
     ----------
@@ -138,7 +142,10 @@ class EventDisplay:
         gamma: float = 2.0,
         smooth: bool = False,
         bounds=None,
+        theme: str = "light",
     ):
+        if theme not in THEMES:
+            raise ValueError(f"theme must be one of {THEMES}, not {theme!r}")
         if bounds is not None:
             bounds = np.asarray(bounds, dtype=float)
             if bounds.shape != (2, 3) or np.any(bounds[1] <= bounds[0]):
@@ -149,6 +156,7 @@ class EventDisplay:
             height=int(height),
             style=VolumeStyle(threshold=threshold, density=density, gamma=gamma, smooth=smooth),
             bounds=bounds,
+            theme=theme,
         )
 
     # ------------------------------------------------------------------ volumes

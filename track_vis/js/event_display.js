@@ -123,7 +123,9 @@
       outColor = acc;
     }`;
 
-  // Round markers with a dark rim, a fixed size in pixels.
+
+  // Round markers a fixed size in pixels: the fill, a ring in the surface colour
+  // (which separates overlapping markers) and a thin anti-aliased edge.
   const POINT_VERT = `
     attribute vec3 color;
     uniform float size;
@@ -134,30 +136,146 @@
       gl_PointSize = size;
     }`;
   const POINT_FRAG = `
+    uniform float size;   // diameter in device pixels
+    uniform float dpr;    // device pixels per CSS pixel
+    uniform vec3 rim;
+    uniform vec3 edge;
     varying vec3 vColor;
     void main() {
-      float r = length(gl_PointCoord - 0.5) * 2.0;
-      if (r > 1.0) discard;
-      gl_FragColor = vec4(r > 0.72 ? vec3(0.1) : vColor, 1.0);
+      float R = 0.5 * size;
+      float d = length(gl_PointCoord - 0.5) * size;
+      vec3 c = mix(vColor, rim, smoothstep(R - 3.2 * dpr, R - 2.4 * dpr, d));
+      c = mix(c, edge, smoothstep(R - 1.4 * dpr, R - 0.8 * dpr, d));
+      float a = 1.0 - smoothstep(R - 0.8 * dpr, R, d);
+      if (a <= 0.0) discard;
+      gl_FragColor = vec4(c, a);
     }`;
 
-  const AXES = [
-    // Each axis runs along one box edge; `out` points away from the box for ticks.
-    { name: "x", color: 0xd62728, edge: (lo, hi) => [null, lo.y, lo.z], out: [0, -1, 0] },
-    { name: "y", color: 0x2ca02c, edge: (lo, hi) => [hi.x, null, lo.z], out: [1, 0, 0] },
-    { name: "z", color: 0x1f77b4, edge: (lo, hi) => [lo.x, lo.y, null], out: [-1, -1, 0] },
-  ];
+  // ---------------------------------------------------------------- theme
+  // Colours drawn by WebGL (numbers) per theme; the page elements use the CSS
+  // variables in STYLE below, keyed on the same data-theme attribute.
+  const THEMES = {
+    light: {
+      halo: 0xfafbfc, box: 0xd3d8e0, grid: 0xe9ecf1, axis: 0x9aa2af,
+      rim: [1, 1, 1], edge: [0.2, 0.23, 0.29],
+    },
+    dark: {
+      halo: 0x0e121a, box: 0x323a48, grid: 0x1a1f29, axis: 0x5b6475,
+      rim: [0.055, 0.07, 0.1], edge: [0.78, 0.81, 0.87],
+    },
+  };
   const HOVER_RADIUS_PX = 10;
-  const PANEL_STYLE = "position:absolute;left:8px;top:8px;max-height:calc(100% - 40px);overflow:auto;" +
-    "background:rgba(255,255,255,.88);padding:6px 8px;border-radius:4px;line-height:1.7;box-shadow:0 1px 3px rgba(0,0,0,.15)";
+  const HALO_PX = 3;  // extra width of the background-coloured outline behind lines
+  const HALO_DEPTH = 0.03;  // how far behind its line the outline sits, in scene radii
+
+  const STYLE = `
+.tv-root{--tv-ink:#1d2330;--tv-ink2:#5a6273;--tv-ink3:#8a92a2;--tv-border:#e2e5eb;--tv-bg1:#ffffff;--tv-bg2:#f2f4f7;
+  --tv-card:rgba(255,255,255,.78);--tv-card-border:rgba(20,28,45,.08);--tv-accent:#3d6fe0;--tv-track:#d9dde4;
+  --tv-btn:rgba(255,255,255,.9);--tv-btn-hover:#f0f2f6;--tv-tip:rgba(24,29,40,.94);--tv-tip-ink:#f3f5f8;
+  --tv-shadow:0 1px 2px rgba(16,24,40,.05),0 8px 24px rgba(16,24,40,.08);
+  position:relative;box-sizing:border-box;font:12px/1.45 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  color:var(--tv-ink);background:radial-gradient(130% 100% at 50% 0%,var(--tv-bg1),var(--tv-bg2));
+  border:1px solid var(--tv-border);border-radius:12px;overflow:hidden;-webkit-font-smoothing:antialiased}
+.tv-root[data-theme=dark]{--tv-ink:#e6e9ef;--tv-ink2:#a3abba;--tv-ink3:#6e7788;--tv-border:#222834;--tv-bg1:#161b25;--tv-bg2:#0a0d13;
+  --tv-card:rgba(20,24,33,.78);--tv-card-border:rgba(255,255,255,.07);--tv-accent:#7c9dff;--tv-track:#2c3340;
+  --tv-btn:rgba(30,35,46,.9);--tv-btn-hover:#2a303c;--tv-tip:rgba(236,239,244,.96);--tv-tip-ink:#161b24;
+  --tv-shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.35)}
+.tv-root *{box-sizing:border-box}
+.tv-root:fullscreen{max-width:none!important;width:100vw!important;height:100vh!important;border-radius:0;border:0}
+.tv-card{background:var(--tv-card);border:1px solid var(--tv-card-border);border-radius:10px;box-shadow:var(--tv-shadow);
+  -webkit-backdrop-filter:blur(10px) saturate(1.2);backdrop-filter:blur(10px) saturate(1.2)}
+.tv-btn{font:inherit;font-weight:500;color:var(--tv-ink);background:var(--tv-btn);border:1px solid var(--tv-card-border);
+  border-radius:8px;padding:4px 10px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;line-height:1.3;
+  box-shadow:0 1px 2px rgba(16,24,40,.06)}
+.tv-btn:hover:not(:disabled){background:var(--tv-btn-hover)}
+.tv-btn:disabled{opacity:.4;cursor:default}
+.tv-btn:focus-visible,.tv-switch input:focus-visible+span,.tv-slider input:focus-visible{outline:2px solid var(--tv-accent);outline-offset:2px}
+.tv-btn svg{width:14px;height:14px;flex:none}
+.tv-icon{padding:5px}
+.tv-chev{transition:transform .15s}
+.tv-btn[aria-expanded=true] .tv-chev{transform:rotate(180deg)}
+.tv-header{position:absolute;left:12px;top:12px;right:220px;display:flex;align-items:center;gap:10px;pointer-events:none}
+.tv-header>*{pointer-events:auto}
+.tv-title{font-size:13px;font-weight:600;letter-spacing:-.005em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  pointer-events:none;text-shadow:0 0 6px var(--tv-bg1)}
+.tv-panel{position:absolute;left:12px;top:50px;width:264px;max-height:calc(100% - 96px);overflow:auto;padding:10px 12px}
+.tv-section{font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--tv-ink3);margin:2px 0 6px}
+.tv-section:not(:first-child){margin-top:12px;padding-top:10px;border-top:1px solid var(--tv-card-border)}
+.tv-slider{display:grid;grid-template-columns:62px 1fr 34px;align-items:center;gap:8px;margin:3px 0;color:var(--tv-ink2)}
+.tv-slider input{width:100%;margin:0;accent-color:var(--tv-accent);height:16px}
+.tv-slider output{text-align:right;font-variant-numeric:tabular-nums;color:var(--tv-ink)}
+.tv-switch{display:flex;align-items:center;gap:8px;padding:3px 0;cursor:pointer;min-height:24px}
+.tv-switch input{position:absolute;opacity:0;width:1px;height:1px;margin:0}
+.tv-switch>span:first-of-type{flex:none;width:26px;height:15px;border-radius:8px;background:var(--tv-track);position:relative;transition:background .15s}
+.tv-switch>span:first-of-type::after{content:"";position:absolute;left:2px;top:2px;width:11px;height:11px;border-radius:50%;
+  background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.25);transition:transform .15s}
+.tv-switch input:checked+span{background:var(--tv-accent)}
+.tv-switch input:checked+span::after{transform:translateX(11px)}
+.tv-switch .tv-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tv-switch .tv-detail{color:var(--tv-ink3);margin-left:4px}
+.tv-swatch{flex:none;display:inline-block}
+.tv-swatch.line{width:16px;height:4px;border-radius:2px}
+.tv-swatch.point{width:10px;height:10px;border-radius:50%;box-shadow:0 0 0 1.5px var(--tv-bg1),0 0 0 2.5px var(--tv-ink3)}
+.tv-swatch.volume{width:12px;height:12px;border-radius:3px}
+.tv-swatch.dashed{-webkit-mask:repeating-linear-gradient(90deg,#000 0 5px,transparent 5px 8px);mask:repeating-linear-gradient(90deg,#000 0 5px,transparent 5px 8px)}
+.tv-panel .tv-btn{margin-top:10px}
+.tv-bars{position:absolute;right:12px;top:12px;width:188px;padding:9px 12px 7px;display:flex;flex-direction:column;gap:9px;pointer-events:none}
+.tv-bar-title{font-weight:500;color:var(--tv-ink2);margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tv-bar-ramp{height:8px;border-radius:4px;box-shadow:inset 0 0 0 1px rgba(127,127,127,.18)}
+.tv-bar-ticks{display:flex;justify-content:space-between;margin-top:3px;font-size:11px;color:var(--tv-ink2);font-variant-numeric:tabular-nums}
+.tv-status{position:absolute;left:12px;bottom:10px;right:96px;color:var(--tv-ink3);font-size:11px;pointer-events:none;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tv-status.tv-active{color:var(--tv-ink)}
+.tv-tools{position:absolute;right:12px;bottom:10px;display:flex;gap:6px}
+.tv-ticks{position:absolute;inset:0;pointer-events:none;overflow:hidden}
+.tv-tick{position:absolute;font-size:10.5px;color:var(--tv-ink3);white-space:nowrap;font-variant-numeric:tabular-nums}
+.tv-axis-title{position:absolute;font-size:11px;font-weight:600;color:var(--tv-ink2);white-space:nowrap}
+.tv-tip{position:absolute;display:none;pointer-events:none;background:var(--tv-tip);color:var(--tv-tip-ink);padding:6px 9px;
+  border-radius:8px;white-space:pre;font-size:11px;line-height:1.45;z-index:5;box-shadow:0 4px 16px rgba(0,0,0,.2);
+  font-variant-numeric:tabular-nums}
+.tv-tip b{display:flex;align-items:center;gap:6px;font-weight:600;margin-bottom:1px}
+.tv-tip .tv-dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+.tv-menu{display:flex;align-items:center;gap:6px;margin:0 0 8px;font:12px/1.4 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.tv-menu .tv-btn{border-color:rgba(20,28,45,.14)}
+.tv-select{font:inherit;font-size:13px;font-weight:500;color:#1d2330;background:#fff;border:1px solid rgba(20,28,45,.14);border-radius:8px;
+  padding:5px 10px;max-width:100%;min-width:0;flex:0 1 auto;box-shadow:0 1px 2px rgba(16,24,40,.06);cursor:pointer}
+.tv-menu[data-theme=dark] .tv-select,.tv-menu[data-theme=dark] .tv-btn{color:#e6e9ef;background:#1a1f29;border-color:#2c3340}
+.tv-menu[data-theme=dark] .tv-btn:hover{background:#2a303c}
+`;
+
+  const ICONS = {
+    sliders: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2 4h7M13 4h1M2 12h1M7 12h7"/><circle cx="11" cy="4" r="1.8"/><circle cx="5" cy="12" r="1.8"/></svg>',
+    chevron: '<svg class="tv-chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 6.5 8 10l3.5-3.5"/></svg>',
+    reset: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 8a5.5 5.5 0 1 0 1.7-4"/><path d="M2.5 2.5v3h3"/></svg>',
+    expand: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10"/></svg>',
+    prev: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3.5 5.5 8l4.5 4.5"/></svg>',
+    next: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5"/></svg>',
+  };
+
+  // The stylesheet is added once per document.
+  function ensureStyle() {
+    if (document.getElementById("track-vis-style")) return;
+    const s = document.createElement("style");
+    s.id = "track-vis-style";
+    s.textContent = STYLE;
+    document.head.appendChild(s);
+  }
 
   // ---------------------------------------------------------------- helpers
 
-  function el(tag, style, text) {
+  function el(tag, cls, text) {
     const e = document.createElement(tag);
-    if (style) e.style.cssText = style;
+    if (cls) e.className = cls;
     if (text !== undefined) e.textContent = text;
     return e;
+  }
+
+  function button(cls, html, label) {
+    const b = el("button", "tv-btn " + (cls || ""));
+    b.type = "button";
+    b.innerHTML = html;
+    if (label) { b.title = label; b.setAttribute("aria-label", label); }
+    return b;
   }
 
   function b64ToBytes(s) {
@@ -195,8 +313,20 @@
     return tex;
   }
 
-  function cssGradient(stops) {
-    return "linear-gradient(to top, " + stops.map(([p, h]) => `${h} ${(100 * p).toFixed(1)}%`).join(", ") + ")";
+  function cssGradient(stops, dir = "to right") {
+    return `linear-gradient(${dir}, ` + stops.map(([p, h]) => `${h} ${(100 * p).toFixed(1)}%`).join(", ") + ")";
+  }
+
+  const rgbCss = (c, i = 0) => `rgb(${[0, 1, 2].map((k) => Math.round(255 * c[3 * i + k])).join(",")})`;
+
+  // CSS background for a legend swatch: one colour, or a few colours sampled along
+  // the layer (e.g. tracks coloured by time).
+  function swatchFill(colors) {
+    const n = colors.length / 3;
+    if (!n) return "transparent";
+    const picks = [0, 0.33, 0.66, 1].map((f) => Math.round(f * (n - 1)));
+    const css = [...new Set(picks.map((i) => rgbCss(colors, i)))];
+    return css.length === 1 ? css[0] : `linear-gradient(to right, ${css.join(", ")})`;
   }
 
   function expandByPositions(box, pos) {
@@ -214,10 +344,16 @@
 
   const fmt = (x) => String(+x.toPrecision(10));
 
+  // "PDG 11 (3 tracks, 1.80 MeV dep.)" -> ["PDG 11", "3 tracks, 1.80 MeV dep."]
+  function splitName(name) {
+    const m = /^(.*\S)\s+\(([^()]*)\)$/.exec(name);
+    return m ? [m[1], m[2]] : [name, ""];
+  }
+
   // ---------------------------------------------------------------- scene layers
   // One builder per list in the scene JSON (volumes, lines, points). Each adds
   // objects to ctx.scene, grows ctx.bounds and pushes a layer
-  // {name, objects, visible, hover?: {pos: Float32Array, text: string[]}}.
+  // {name, objects, visible, swatch, hover?: {pos: Float32Array, text: string[], colors?}}.
 
   function addVolume(ctx, v) {
     const [nx, ny, nz] = v.shape;
@@ -258,76 +394,112 @@
 
     const volume = { spec: v, raw, tex, box, mesh };
     ctx.volumes.push(volume);
-    ctx.layers.push({ name: v.name, objects: [mesh], visible: v.visible });
+    const swatch = { kind: "volume", fill: cssGradient(v.colorscale, "135deg") };
+    ctx.layers.push({ name: v.name, objects: [mesh], visible: v.visible, swatch });
   }
 
   function addLines(ctx, ln) {
     const pos = b64ToFloats(ln.segments);
+    const colors = b64ToFloats(ln.colors);
     const geometry = new THREE.LineSegmentsGeometry();
     geometry.setPositions(pos);
-    geometry.setColors(b64ToFloats(ln.colors));
-    const material = new THREE.LineMaterial({
-      linewidth: ln.width, vertexColors: true, dashed: ln.dashed, dashSize: ln.dash, gapSize: 0.6 * ln.dash,
-    });
+    geometry.setColors(colors);
+    const dash = { dashed: ln.dashed, dashSize: ln.dash, gapSize: 0.6 * ln.dash };
+    const material = new THREE.LineMaterial({ linewidth: ln.width, vertexColors: true, ...dash });
     const lines = new THREE.LineSegments2(geometry, material);
+    // A wider outline in the background colour, drawn just behind the line, so
+    // crossing tracks stay separate and nearer tracks occlude farther ones.
+    // The outline is pushed a little away from the camera (see placeHalos), so it
+    // never hides the next steps of its own track.
+    const haloMaterial = new THREE.LineMaterial({ linewidth: ln.width + HALO_PX, color: ctx.theme.halo, ...dash });
+    const halo = new THREE.LineSegments2(geometry, haloMaterial);
+    ctx.halos.push(halo);
     if (ln.dashed) lines.computeLineDistances();
-    ctx.scene.add(lines);
-    ctx.lineMaterials.push(material);  // needs the canvas resolution on resize
+    ctx.scene.add(halo, lines);
+    ctx.lineMaterials.push(material, haloMaterial);  // need the canvas resolution on resize
     expandByPositions(ctx.bounds, pos);
     const hover = ln.hover && { pos: b64ToFloats(ln.hover.points), text: ln.hover.text };
-    ctx.layers.push({ name: ln.name, objects: [lines], visible: ln.visible, hover });
+    const swatch = { kind: "line", dashed: ln.dashed, fill: swatchFill(colors) };
+    ctx.layers.push({ name: ln.name, objects: [halo, lines], visible: ln.visible, hover, swatch });
   }
 
   function addPoints(ctx, pt) {
     const pos = b64ToFloats(pt.positions);
+    const colors = b64ToFloats(pt.colors);
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-    geometry.setAttribute("color", new THREE.BufferAttribute(b64ToFloats(pt.colors), 3));
+    geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
     const material = new THREE.ShaderMaterial({
-      uniforms: { size: { value: pt.size * ctx.pixelRatio } },
+      uniforms: {
+        size: { value: pt.size * ctx.pixelRatio },
+        dpr: { value: ctx.pixelRatio },
+        rim: { value: new THREE.Vector3(...ctx.theme.rim) },
+        edge: { value: new THREE.Vector3(...ctx.theme.edge) },
+      },
       vertexShader: POINT_VERT,
       fragmentShader: POINT_FRAG,
+      transparent: true,  // anti-aliased edge; drawn before the volumes (renderOrder)
     });
     const points = new THREE.Points(geometry, material);
     ctx.scene.add(points);
     expandByPositions(ctx.bounds, pos);
-    ctx.layers.push({ name: pt.name, objects: [points], visible: pt.visible, hover: { pos, text: pt.hover } });
+    const swatch = { kind: "point", fill: swatchFill(colors) };
+    ctx.layers.push({ name: pt.name, objects: [points], visible: pt.visible, swatch, hover: { pos, text: pt.hover, colors } });
   }
 
   // ---------------------------------------------------------------- axes
 
-  // Ticked x/y/z axes along three edges of ctx.bounds. Tick labels are HTML,
-  // re-placed in screen space every frame by the returned function.
+  // Ticked x/y/z axes along three edges of ctx.bounds, a faint grid on the floor
+  // and the box outline. Tick labels are HTML, re-placed in screen space every
+  // frame by the returned function.
+  const AXES = [
+    // Each axis runs along one box edge; `out` points away from the box for ticks.
+    { name: "x", edge: (lo, hi) => [null, lo.y, lo.z], out: [0, -1, 0] },
+    { name: "y", edge: (lo, hi) => [hi.x, null, lo.z], out: [1, 0, 0] },
+    { name: "z", edge: (lo, hi) => [lo.x, lo.y, null], out: [-1, -1, 0] },
+  ];
+
   function addAxes(ctx) {
-    const { bounds, scene, camera, root } = ctx;
+    const { bounds, scene, camera, root, theme } = ctx;
     const lo = bounds.min, hi = bounds.max;
     const span = Math.max(...bounds.getSize(new THREE.Vector3()).toArray());
     const step = tickStep(span);
-    const tickLen = 0.02 * span;
-    const layer = el("div", "position:absolute;inset:0;pointer-events:none;overflow:hidden");
+    const tickLen = 0.015 * span;
+    const layer = el("div", "tv-ticks");
     root.appendChild(layer);
+    const ticksAlong = (k) => {
+      const out = [];
+      for (let i = Math.ceil(lo.getComponent(k) / step - 1e-9); i * step <= hi.getComponent(k) + 1e-9 * span; i++) out.push(i * step);
+      return out;
+    };
 
+    // Floor grid at the tick positions.
+    const grid = [];
+    for (const x of ticksAlong(0)) grid.push(new THREE.Vector3(x, lo.y, lo.z), new THREE.Vector3(x, hi.y, lo.z));
+    for (const y of ticksAlong(1)) grid.push(new THREE.Vector3(lo.x, y, lo.z), new THREE.Vector3(hi.x, y, lo.z));
+    scene.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(grid), new THREE.LineBasicMaterial({ color: theme.grid })));
+    scene.add(new THREE.Box3Helper(bounds.clone(), theme.box));
+
+    const pts = [];
     const axes = AXES.map((ax) => {
       const k = "xyz".indexOf(ax.name);
       const out = new THREE.Vector3(...ax.out).normalize();
       const at = (val) => new THREE.Vector3(...ax.edge(lo, hi).map((b, i) => (i === k ? val : b)));
       const axis = { start: at(lo.getComponent(k)), end: at(hi.getComponent(k)), ticks: [] };
-      const pts = [axis.start, axis.end];
-      const first = Math.ceil(lo.getComponent(k) / step - 1e-9);
-      for (let i = first; i * step <= hi.getComponent(k) + 1e-9 * span; i++) {
-        const base = at(i * step);
+      pts.push(axis.start, axis.end);
+      for (const val of ticksAlong(k)) {
+        const base = at(val);
         const tip = base.clone().addScaledVector(out, tickLen);
         pts.push(base, tip);
-        const label = el("div", "position:absolute;font-size:11px;color:#444;white-space:nowrap;font-variant-numeric:tabular-nums", fmt(i * step));
+        const label = el("div", "tv-tick", fmt(val));
         layer.appendChild(label);
         axis.ticks.push({ base, tip, label });
       }
-      axis.title = el("div", "position:absolute;font-size:12px;font-weight:600;white-space:nowrap", `${ax.name} (mm)`);
-      axis.title.style.color = "#" + ax.color.toString(16).padStart(6, "0");
+      axis.title = el("div", "tv-axis-title", `${ax.name} (mm)`);
       layer.appendChild(axis.title);
-      scene.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: ax.color })));
       return axis;
     });
+    scene.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: theme.axis })));
 
     const toScreen = (p, w, h) => {
       const q = p.clone().project(camera);
@@ -370,33 +542,35 @@
 
   // ---------------------------------------------------------------- overlay UI
 
+  // Title and "Options" button in the top-left corner; the button shows the panel
+  // of volume controls and the layer list (which doubles as the legend).
   function addPanel(ctx, resetCamera) {
-    const { spec, styleUniforms: u, volumes, layers } = ctx;
-    const box = el("div", PANEL_STYLE);
-    // The title and controls start hidden behind an "options" button so they don't
-    // cover the view on small screens. The open/closed choice is kept on root, so a
-    // DisplayMenu remembers it when another event is picked.
-    const toggle = el("button", "font:inherit;padding:1px 8px;cursor:pointer;white-space:nowrap");
-    toggle.type = "button";
-    const panel = el("div", "margin-top:4px");
-    box.append(toggle, panel);
-    if (spec.title) panel.appendChild(el("div", "font-weight:600;max-width:260px", spec.title));
+    const { spec, styleUniforms: u, volumes, layers, root } = ctx;
+    const header = el("div", "tv-header");
+    const toggle = button("", ICONS.sliders + "<span>Options</span>" + ICONS.chevron);
+    header.appendChild(toggle);
+    if (spec.title) {
+      const title = el("div", "tv-title", spec.title);
+      title.title = spec.title;
+      header.appendChild(title);
+    }
+    const panel = el("div", "tv-panel tv-card");
+    // The panel starts hidden so it doesn't cover the view on small screens. The
+    // open/closed choice is kept on root, so a DisplayMenu remembers it when another
+    // event is picked.
     const setOpen = (open) => {
-      ctx.root._trackvisPanelOpen = open;
+      root._trackvisPanelOpen = open;
       panel.style.display = open ? "" : "none";
-      box.style.padding = open ? "6px 8px" : "2px";
-      toggle.textContent = open ? "\u25be options" : "\u25b8 options";
       toggle.setAttribute("aria-expanded", String(open));
       toggle.title = open ? "hide the controls" : "show the controls";
     };
-    toggle.addEventListener("click", () => setOpen(!ctx.root._trackvisPanelOpen));
-    setOpen(Boolean(ctx.root._trackvisPanelOpen));
+    toggle.addEventListener("click", () => setOpen(!root._trackvisPanelOpen));
 
     const slider = (label, min, max, step, value, apply) => {
-      const row = el("label", "display:flex;align-items:center;gap:6px");
-      const input = el("input", "width:110px");
+      const row = el("label", "tv-slider");
+      const input = el("input");
       Object.assign(input, { type: "range", min, max, step, value });
-      const readout = el("span", "width:42px;text-align:right;font-variant-numeric:tabular-nums");
+      const readout = el("output");
       const update = () => {
         const x = parseFloat(input.value);
         apply(x);
@@ -404,62 +578,96 @@
         ctx.draw();
       };
       input.addEventListener("input", update);
-      row.append(el("span", "width:62px", label), input, readout);
+      row.append(el("span", "", label), input, readout);
       panel.appendChild(row);
       update();
     };
-    const checkbox = (label, checked, apply) => {
-      const row = el("label", "display:flex;align-items:center;gap:6px;cursor:pointer");
+    const toggleRow = (label, checked, apply, swatch) => {
+      const row = el("label", "tv-switch");
       const input = el("input");
       Object.assign(input, { type: "checkbox", checked });
       input.addEventListener("change", () => { apply(input.checked); ctx.draw(); });
-      row.append(input, el("span", "", label));
+      row.append(input, el("span"));
+      if (swatch) {
+        const s = el("span", `tv-swatch ${swatch.kind}${swatch.dashed ? " dashed" : ""}`);
+        s.style.background = swatch.fill;
+        row.appendChild(s);
+      }
+      const [main, detail] = splitName(label);
+      const name = el("span", "tv-name", main);
+      if (detail) name.appendChild(el("span", "tv-detail", detail));
+      name.title = label;
+      row.appendChild(name);
       panel.appendChild(row);
       apply(checked);
     };
 
     if (volumes.length) {
       const s = spec.volume_style;
+      panel.appendChild(el("div", "tv-section", "Volume rendering"));
       slider("threshold", 0, 0.6, 0.01, s.threshold, (x) => { u.thresh.value = x; });
       slider("density", 0.05, 6, 0.05, s.density, (x) => { u.density.value = x; });
       slider("gamma", 0.3, 3, 0.05, s.gamma, (x) => { u.gamma.value = x; });
-      checkbox("smooth (trilinear)", s.smooth, (on) => {
+      toggleRow("smooth (trilinear)", s.smooth, (on) => {
         for (const v of volumes) {
           v.tex.minFilter = v.tex.magFilter = on ? THREE.LinearFilter : THREE.NearestFilter;
           v.tex.needsUpdate = true;
         }
         u.sharp.value = !on;
       });
-      checkbox("max-intensity projection", false, (on) => { u.mip.value = on; });
+      toggleRow("max-intensity projection", false, (on) => { u.mip.value = on; });
     }
+    panel.appendChild(el("div", "tv-section", "Layers"));
     for (const layer of layers) {
-      checkbox(layer.name, layer.visible, (on) => {
+      toggleRow(layer.name, layer.visible, (on) => {
         layer.visible = on;
         for (const o of layer.objects) o.visible = on;
-      });
+      }, layer.swatch);
     }
-    const reset = el("button", "margin-top:2px;font:inherit;padding:1px 8px;cursor:pointer", "reset view");
+    const reset = button("", ICONS.reset + "<span>Reset view</span>");
     reset.addEventListener("click", () => { resetCamera(); ctx.draw(); });
     panel.appendChild(reset);
-    ctx.root.appendChild(box);
+    setOpen(Boolean(root._trackvisPanelOpen));
+    root.append(header, panel);
   }
 
-  // One colour bar per volume plus spec.colorbars (the shared time bar), right to left.
+  // Reset and full-screen buttons in the bottom-right corner.
+  function addTools(ctx, resetCamera) {
+    const tools = el("div", "tv-tools");
+    const reset = button("tv-icon", ICONS.reset, "Reset the camera");
+    reset.addEventListener("click", () => { resetCamera(); ctx.draw(); });
+    tools.appendChild(reset);
+    if (ctx.root.requestFullscreen) {
+      const full = button("tv-icon", ICONS.expand, "Full screen");
+      full.addEventListener("click", () => {
+        if (document.fullscreenElement === ctx.root) document.exitFullscreen();
+        else ctx.root.requestFullscreen().catch(() => {});
+      });
+      tools.appendChild(full);
+    }
+    ctx.root.appendChild(tools);
+  }
+
+  // One horizontal colour bar per volume plus spec.colorbars (the shared time bar),
+  // stacked in a card in the top-right corner.
   function addColorbars(ctx) {
     const bars = ctx.spec.volumes
       .map((v) => ({ title: v.colorbar_title, stops: v.colorscale, min: 0, max: v.e_max }))
       .concat(ctx.spec.colorbars);
-    bars.forEach((bar, i) => {
-      const box = el("div", `position:absolute;right:${12 + i * 78}px;top:64px;bottom:40px;width:56px`);
-      box.appendChild(el("div", "position:absolute;bottom:calc(100% + 6px);left:0;width:70px;line-height:1.15", bar.title));
-      box.appendChild(el("div", `position:absolute;left:0;top:0;bottom:0;width:12px;border:1px solid #999;background:${cssGradient(bar.stops)}`));
-      for (let j = 0; j <= 4; j++) {
-        const f = j / 4;
-        const value = fmt(+(bar.min + f * (bar.max - bar.min)).toPrecision(3));
-        box.appendChild(el("div", `position:absolute;left:16px;bottom:calc(${100 * f}% - 7px);font-variant-numeric:tabular-nums`, value));
-      }
-      ctx.root.appendChild(box);
-    });
+    if (!bars.length) return;
+    const card = el("div", "tv-bars tv-card");
+    for (const bar of bars) {
+      const box = el("div");
+      box.appendChild(el("div", "tv-bar-title", bar.title));
+      const ramp = el("div", "tv-bar-ramp");
+      ramp.style.background = cssGradient(bar.stops);
+      box.appendChild(ramp);
+      const ticks = el("div", "tv-bar-ticks");
+      for (const f of [0, 0.5, 1]) ticks.appendChild(el("span", "", fmt(+(bar.min + f * (bar.max - bar.min)).toPrecision(3))));
+      box.appendChild(ticks);
+      card.appendChild(box);
+    }
+    ctx.root.appendChild(card);
   }
 
   // ---------------------------------------------------------------- hover
@@ -468,11 +676,14 @@
   // the status line reports the brightest above-threshold voxel under the cursor.
   function addHover(ctx, status, baseStatus) {
     const { root, renderer, camera, layers, volumes, styleUniforms } = ctx;
-    const tip = el("div", "position:absolute;display:none;pointer-events:none;background:rgba(30,30,30,.9);color:#fff;" +
-      "padding:3px 6px;border-radius:3px;white-space:pre;font-size:11px;line-height:1.35;z-index:5");
+    const tip = el("div", "tv-tip");
     root.appendChild(tip);
     const v3 = new THREE.Vector3();
     const raycaster = new THREE.Raycaster();
+    const setStatus = (text, active) => {
+      status.textContent = text;
+      status.classList.toggle("tv-active", active);
+    };
 
     function nearestHoverPoint(mx, my, w, h) {
       let best = null, bestD2 = HOVER_RADIUS_PX ** 2;
@@ -483,10 +694,21 @@
           v3.set(pos[3 * i], pos[3 * i + 1], pos[3 * i + 2]).project(camera);
           if (v3.z > 1) continue;
           const dx = ((v3.x + 1) / 2) * w - mx, dy = ((1 - v3.y) / 2) * h - my;
-          if (dx * dx + dy * dy < bestD2) { bestD2 = dx * dx + dy * dy; best = `${layer.name}\n${layer.hover.text[i]}`; }
+          if (dx * dx + dy * dy < bestD2) { bestD2 = dx * dx + dy * dy; best = { layer, i }; }
         }
       }
       return best;
+    }
+
+    function showTip({ layer, i }) {
+      const head = el("b");
+      if (layer.hover.colors) {
+        const dot = el("span", "tv-dot");
+        dot.style.background = rgbCss(layer.hover.colors, i);
+        head.appendChild(dot);
+      }
+      head.appendChild(document.createTextNode(splitName(layer.name)[0]));
+      tip.replaceChildren(head, document.createTextNode(layer.hover.text[i]));
     }
 
     function brightestVoxel(ray) {
@@ -514,22 +736,22 @@
     function update(ev) {
       const r = renderer.domElement.getBoundingClientRect();
       const mx = ev.clientX - r.left, my = ev.clientY - r.top;
-      const text = nearestHoverPoint(mx, my, r.width, r.height);
-      if (text) {
-        tip.textContent = text;
+      const near = nearestHoverPoint(mx, my, r.width, r.height);
+      if (near) {
+        showTip(near);
         tip.style.display = "block";
-        tip.style.left = Math.min(mx + 12, r.width - tip.offsetWidth - 4) + "px";
-        tip.style.top = Math.max(my - tip.offsetHeight - 8, 4) + "px";
-        status.textContent = baseStatus;
+        tip.style.left = Math.min(mx + 14, r.width - tip.offsetWidth - 6) + "px";
+        tip.style.top = Math.max(my - tip.offsetHeight - 10, 6) + "px";
+        setStatus(baseStatus, false);
         return;
       }
       tip.style.display = "none";
       raycaster.setFromCamera(new THREE.Vector2((mx / r.width) * 2 - 1, -(my / r.height) * 2 + 1), camera);
       const hit = brightestVoxel(raycaster.ray);
-      if (!hit) { status.textContent = baseStatus; return; }
+      if (!hit) { setStatus(baseStatus, false); return; }
       const { spec } = hit.vol;
       const centre = hit.idx.map((k, a) => fmt(+(spec.origin[a] + (k + 0.5) * spec.voxel_size).toFixed(1)));
-      status.textContent = `${spec.name}: voxel (${centre.join(", ")}) mm · ${spec.colorbar_title} ${(hit.u * spec.e_max).toPrecision(3)}`;
+      setStatus(`${spec.name}: voxel (${centre.join(", ")}) mm · ${spec.colorbar_title} ${(hit.u * spec.e_max).toPrecision(3)}`, true);
     }
 
     let pending = null;  // coalesce mouse moves to one update per frame
@@ -537,7 +759,7 @@
       if (!pending) requestAnimationFrame(() => { update(pending); pending = null; });
       pending = ev;
     });
-    const hide = () => { tip.style.display = "none"; status.textContent = baseStatus; };
+    const hide = () => { tip.style.display = "none"; setStatus(baseStatus, false); };
     renderer.domElement.addEventListener("mouseleave", hide);
     return hide;
   }
@@ -545,28 +767,36 @@
   // ---------------------------------------------------------------- render
 
   function render(root, spec) {
-    root.style.cssText += `position:relative;width:100%;max-width:${spec.width}px;height:${spec.height}px;` +
-      "font:12px system-ui,-apple-system,Segoe UI,sans-serif;color:#222;background:#fff;border:1px solid #ddd;border-radius:4px;overflow:hidden;";
+    ensureStyle();
+    const themeName = THEMES[spec.theme] ? spec.theme : "light";
+    root.classList.add("tv-root");
+    root.dataset.theme = themeName;
+    root.style.cssText += `width:100%;max-width:${spec.width}px;height:${spec.height}px;`;
 
     const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    // A transparent canvas over the CSS background gradient; the volumes write
+    // premultiplied colour, which is what the page compositor expects.
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setPixelRatio(pixelRatio);
-    renderer.setClearColor(0xffffff, 1);
+    renderer.setClearColor(0x000000, 0);
     renderer.domElement.style.display = "block";
     root.appendChild(renderer.domElement);
 
-    const camera = new THREE.PerspectiveCamera(35, 1, 1, 1e7);
+    const camera = new THREE.PerspectiveCamera(32, 1, 1, 1e7);
     camera.up.set(0, 0, 1);  // must precede OrbitControls, which caches the up axis
     const controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = false;
 
     const style = spec.volume_style;
     const ctx = {
       root, spec, renderer, camera, pixelRatio,
+      theme: THEMES[themeName],
       scene: new THREE.Scene(),
       bounds: new THREE.Box3(),
       layers: [],
       volumes: [],
       lineMaterials: [],
+      halos: [],
       styleUniforms: {
         thresh: { value: style.threshold },
         density: { value: style.density },
@@ -590,11 +820,12 @@
       const size = ctx.bounds.getSize(new THREE.Vector3());
       ctx.bounds.expandByScalar(0.04 * Math.max(size.x, size.y, size.z) + 1);
     }
-    ctx.scene.add(new THREE.Box3Helper(ctx.bounds.clone(), 0xc8c8c8));
     const axes = addAxes(ctx);
 
+    // Frame the box's bounding sphere, with room for the tick labels.
     const centre = ctx.bounds.getCenter(new THREE.Vector3());
-    const distance = ctx.bounds.getSize(new THREE.Vector3()).length() * 0.5 * 3.9;
+    const radius = 0.5 * ctx.bounds.getSize(new THREE.Vector3()).length();
+    const distance = (1.12 * radius) / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2));
     const viewDir = new THREE.Vector3(1.0, -1.4, 0.8).normalize();
     const resetCamera = () => {
       camera.position.copy(centre).addScaledVector(viewDir, distance);
@@ -604,8 +835,8 @@
     resetCamera();
 
     const voxelSizes = ctx.volumes.length ? `${ctx.volumes.map((v) => v.spec.voxel_size).join("/")} mm voxels · ` : "";
-    const baseStatus = `${voxelSizes}ticks every ${fmt(axes.step)} mm · drag rotate, scroll zoom, right-drag pan`;
-    const status = el("div", "position:absolute;left:8px;bottom:6px;color:#555;pointer-events:none", baseStatus);
+    const baseStatus = `${voxelSizes}grid ${fmt(axes.step)} mm · drag to rotate, scroll to zoom, right-drag to pan`;
+    const status = el("div", "tv-status", baseStatus);
     root.appendChild(status);
     const hideHover = addHover(ctx, status, baseStatus);
     addColorbars(ctx);
@@ -618,11 +849,23 @@
       camera.updateProjectionMatrix();
       for (const m of ctx.lineMaterials) m.resolution.set(w, h);
     }
+    // Scale each line outline about the camera by 1 + depth / distance: it projects
+    // to the same pixels but sits HALO_DEPTH of the scene size farther away.
+    const haloDepth = HALO_DEPTH * radius;
+    const placeHalos = () => {
+      const s = 1 + haloDepth / camera.position.distanceTo(controls.target);
+      for (const h of ctx.halos) {
+        h.scale.setScalar(s);
+        h.position.copy(camera.position).multiplyScalar(1 - s);
+      }
+    };
     ctx.draw = () => {
+      placeHalos();
       renderer.render(ctx.scene, camera);
       axes.placeLabels();
     };
     addPanel(ctx, resetCamera);  // after ctx.draw exists: controls apply their initial state
+    addTools(ctx, resetCamera);
     controls.addEventListener("change", () => { hideHover(); ctx.draw(); });
     const resizeObserver = new ResizeObserver(() => { resize(); ctx.draw(); });
     resizeObserver.observe(root);
@@ -687,23 +930,36 @@
     whenVisible(root, urls, () => render(root, spec));
   }
 
-  // Several scenes sharing one view, picked from a drop-down menu. Only the
-  // shown scene holds a WebGL context; switching disposes it and draws the next.
+  // Several scenes sharing one view, picked from a drop-down menu with previous /
+  // next buttons. Only the shown scene holds a WebGL context; switching disposes it
+  // and draws the next.
   function mountMenu(id, specs, labels, urls) {
+    ensureStyle();
     const root = document.getElementById(id);
-    const select = el("select", "display:block;max-width:100%;margin:0 0 6px;font:13px system-ui,-apple-system,Segoe UI,sans-serif");
+    const bar = el("nav", "tv-menu");  // not a div: the view stays the first div inside root
+    bar.dataset.theme = specs[0]?.theme === "dark" ? "dark" : "light";
+    const prev = button("tv-icon", ICONS.prev, "Previous");
+    const next = button("tv-icon", ICONS.next, "Next");
+    const select = el("select", "tv-select");
+    select.setAttribute("aria-label", "Event");
     labels.forEach((label, i) => {
       const option = el("option", "", label);
       option.value = String(i);
       select.appendChild(option);
     });
+    bar.append(prev, select, next);
     const view = el("div");
-    root.replaceChildren(select, view);
+    root.replaceChildren(bar, view);
     const show = (i) => {
+      select.value = String(i);
+      prev.disabled = i === 0;
+      next.disabled = i === specs.length - 1;
       if (view._trackvis) view._trackvis.dispose();
       render(view, specs[i]);
     };
     select.addEventListener("change", () => show(Number(select.value)));
+    prev.addEventListener("click", () => show(Math.max(0, Number(select.value) - 1)));
+    next.addEventListener("click", () => show(Math.min(specs.length - 1, Number(select.value) + 1)));
     whenVisible(root, urls, () => show(0));
   }
 

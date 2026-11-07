@@ -71,7 +71,7 @@ def test_page_renders_without_errors(browser, tmp_path, tracks, vertices):
     labels = page.locator(".track-vis label").all_inner_texts()
     assert sum("smooth" in t or "max-intensity" in t for t in labels) == 2
     assert len(labels) == 3 + 2 + 6  # sliders, render-mode checkboxes, layers
-    # The controls start hidden behind the "options" button, which shows and hides them.
+    # The controls start hidden behind the "Options" button, which shows and hides them.
     options = page.get_by_role("button", name="options")
     assert options.get_attribute("aria-expanded") == "false"
     assert not page.get_by_text("reset view").is_visible()
@@ -79,7 +79,7 @@ def test_page_renders_without_errors(browser, tmp_path, tracks, vertices):
     assert page.get_by_text("reset view").is_visible()
     options.click()
     assert not page.get_by_text("reset view").is_visible()
-    # Something other than the white background was drawn.
+    # Something was drawn: the canvas is transparent over the CSS background.
     coloured = page.evaluate(
         """() => {
             const gl = document.querySelector('.track-vis canvas').getContext('webgl2');
@@ -88,7 +88,7 @@ def test_page_renders_without_errors(browser, tmp_path, tracks, vertices):
             const px = new Uint8Array(4 * w * h);
             gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
             let n = 0;
-            for (let i = 0; i < px.length; i += 4) if (px[i] + px[i + 1] + px[i + 2] < 600) n++;
+            for (let i = 0; i < px.length; i += 4) if (px[i + 3] > 0) n++;
             return n;
         }"""
     )
@@ -113,6 +113,28 @@ def test_menu_switches_scenes(browser, tmp_path, tracks, vertices):
     page.wait_for_function("document.querySelector('.track-vis div')._trackvis?.spec.title === 'second'", timeout=15000)
     assert page.locator(".track-vis canvas").count() == 1  # the first view was disposed
     assert page.get_by_text("reset view").is_visible()  # the next event keeps them open
+    # The previous / next buttons step through the menu, and stop at its ends.
+    assert page.get_by_role("button", name="Next").is_disabled()
+    page.get_by_role("button", name="Previous").click()
+    page.wait_for_function(
+        "document.querySelector('.track-vis div')._trackvis?.spec.title === 'smoke test'", timeout=15000
+    )
+    assert page.locator(".track-vis select").input_value() == "0"
+    assert errors == []
+    page.close()
+
+
+def test_dark_theme(browser, tmp_path, tracks, vertices):
+    path = tmp_path / "dark.html"
+    d = _display(tracks, vertices)
+    d.scene.theme = "dark"
+    d.write_html(str(path))
+    page = browser.new_page()
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(path.as_uri())
+    page.wait_for_function("document.querySelector('.track-vis')?._trackvis !== undefined", timeout=15000)
+    assert page.locator(".track-vis").get_attribute("data-theme") == "dark"
     assert errors == []
     page.close()
 

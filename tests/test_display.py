@@ -69,6 +69,13 @@ def test_bounds_set_the_view_box():
         EventDisplay(bounds=[[0, 0, 0], [0, 1, 1]])
 
 
+def test_theme():
+    assert EventDisplay().scene.to_json()["theme"] == "light"
+    assert EventDisplay(theme="dark").scene.to_json()["theme"] == "dark"
+    with pytest.raises(ValueError, match="theme"):
+        EventDisplay(theme="blue")
+
+
 def test_menu_labels_default_to_titles():
     menu = DisplayMenu([EventDisplay(title="a"), EventDisplay()])
     assert menu.labels == ["a", "display 1"]

@@ -282,7 +282,7 @@ class Scene:
     Parameters
     ----------
     title : str or None
-        Text at the top of the control panel.
+        Text in the top-left corner of the view.
     width : int
         Maximum view width in CSS pixels.
     height : int
@@ -296,6 +296,8 @@ class Scene:
     bounds : numpy.ndarray, shape (2, 3), optional
         Fixed view box ``[[x_min, y_min, z_min], [x_max, y_max, z_max]]``
         (mm) for the axes and camera. None fits the box to all layers.
+    theme : {"light", "dark"}
+        Colours of the background, axes and controls.
     """
 
     title: str | None = None
@@ -307,6 +309,7 @@ class Scene:
     points: list[PointLayer] = field(default_factory=list)
     colorbars: list[Colorbar] = field(default_factory=list)
     bounds: np.ndarray | None = None
+    theme: str = "light"
 
     def to_json(self) -> dict:
         """
@@ -327,4 +330,5 @@ class Scene:
             "points": [p.to_json() for p in self.points],
             "colorbars": [c.to_json() for c in self.colorbars],
             "bounds": None if self.bounds is None else np.asarray(self.bounds, dtype=float).tolist(),
+            "theme": self.theme,
         }
