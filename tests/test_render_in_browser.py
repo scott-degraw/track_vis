@@ -109,10 +109,13 @@ def test_menu_switches_scenes(browser, tmp_path, tracks, vertices):
     page.wait_for_function("document.querySelector('.track-vis div')?._trackvis !== undefined", timeout=15000)
     assert page.locator(".track-vis canvas").count() == 1
     page.get_by_role("button", name="options").click()  # open the controls
+    page.get_by_role("button", name="Dark background").click()
+    assert page.locator(".track-vis nav").get_attribute("data-theme") == "dark"  # the menu bar follows
     page.select_option(".track-vis select", "1")
     page.wait_for_function("document.querySelector('.track-vis div')._trackvis?.spec.title === 'second'", timeout=15000)
     assert page.locator(".track-vis canvas").count() == 1  # the first view was disposed
     assert page.get_by_text("reset view").is_visible()  # the next event keeps them open
+    assert page.locator(".track-vis div").first.get_attribute("data-theme") == "dark"  # and the theme
     # The previous / next buttons step through the menu, and stop at its ends.
     assert page.get_by_role("button", name="Next").is_disabled()
     page.get_by_role("button", name="Previous").click()
@@ -134,6 +137,11 @@ def test_dark_theme(browser, tmp_path, tracks, vertices):
     page.on("pageerror", lambda e: errors.append(str(e)))
     page.goto(path.as_uri())
     page.wait_for_function("document.querySelector('.track-vis')?._trackvis !== undefined", timeout=15000)
+    assert page.locator(".track-vis").get_attribute("data-theme") == "dark"
+    # The toggle button switches between dark and light, and back.
+    page.get_by_role("button", name="Light background").click()
+    assert page.locator(".track-vis").get_attribute("data-theme") == "light"
+    page.get_by_role("button", name="Dark background").click()
     assert page.locator(".track-vis").get_attribute("data-theme") == "dark"
     assert errors == []
     page.close()

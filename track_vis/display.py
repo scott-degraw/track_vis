@@ -123,8 +123,9 @@ class EventDisplay:
         away hidden layers from shrinking the event. Default is None, which
         fits the box to all layers.
     theme : {"light", "dark"}, optional
-        Background, axes and control colours. "dark" makes faint voxels and
-        the bright end of the colour scales stand out. Default is "light".
+        Starting background, axes and control colours; a button in the view
+        switches between them. "dark" makes faint voxels and the bright end of
+        the colour scales stand out. Default is "light".
 
     Attributes
     ----------

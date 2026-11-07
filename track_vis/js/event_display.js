@@ -223,7 +223,7 @@
 .tv-bar-title{font-weight:500;color:var(--tv-ink2);margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tv-bar-ramp{height:8px;border-radius:4px;box-shadow:inset 0 0 0 1px rgba(127,127,127,.18)}
 .tv-bar-ticks{display:flex;justify-content:space-between;margin-top:3px;font-size:11px;color:var(--tv-ink2);font-variant-numeric:tabular-nums}
-.tv-status{position:absolute;left:12px;bottom:10px;right:96px;color:var(--tv-ink3);font-size:11px;pointer-events:none;
+.tv-status{position:absolute;left:12px;bottom:10px;right:132px;color:var(--tv-ink3);font-size:11px;pointer-events:none;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tv-status.tv-active{color:var(--tv-ink)}
 .tv-tools{position:absolute;right:12px;bottom:10px;display:flex;gap:6px}
@@ -248,6 +248,8 @@
     chevron: '<svg class="tv-chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 6.5 8 10l3.5-3.5"/></svg>',
     reset: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 8a5.5 5.5 0 1 0 1.7-4"/><path d="M2.5 2.5v3h3"/></svg>',
     expand: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10"/></svg>',
+    moon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.5 9.6A5.8 5.8 0 0 1 6.4 2.5a5.8 5.8 0 1 0 7.1 7.1Z"/></svg>',
+    sun: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="2.8"/><path d="M8 1.5v1.3M8 13.2v1.3M1.5 8h1.3M13.2 8h1.3M3.4 3.4l.9.9M11.7 11.7l.9.9M3.4 12.6l.9-.9M11.7 4.3l.9-.9"/></svg>',
     prev: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3.5 5.5 8l4.5 4.5"/></svg>',
     next: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5"/></svg>',
   };
@@ -413,6 +415,7 @@
     // never hides the next steps of its own track.
     const haloMaterial = new THREE.LineMaterial({ linewidth: ln.width + HALO_PX, color: ctx.theme.halo, ...dash });
     const halo = new THREE.LineSegments2(geometry, haloMaterial);
+    ctx.themed.push((t) => haloMaterial.color.setHex(t.halo));
     ctx.halos.push(halo);
     if (ln.dashed) lines.computeLineDistances();
     ctx.scene.add(halo, lines);
@@ -441,6 +444,7 @@
       transparent: true,  // anti-aliased edge; drawn before the volumes (renderOrder)
     });
     const points = new THREE.Points(geometry, material);
+    ctx.themed.push((t) => { material.uniforms.rim.value.set(...t.rim); material.uniforms.edge.value.set(...t.edge); });
     ctx.scene.add(points);
     expandByPositions(ctx.bounds, pos);
     const swatch = { kind: "point", fill: swatchFill(colors) };
@@ -477,8 +481,10 @@
     const grid = [];
     for (const x of ticksAlong(0)) grid.push(new THREE.Vector3(x, lo.y, lo.z), new THREE.Vector3(x, hi.y, lo.z));
     for (const y of ticksAlong(1)) grid.push(new THREE.Vector3(lo.x, y, lo.z), new THREE.Vector3(hi.x, y, lo.z));
-    scene.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(grid), new THREE.LineBasicMaterial({ color: theme.grid })));
-    scene.add(new THREE.Box3Helper(bounds.clone(), theme.box));
+    const gridMaterial = new THREE.LineBasicMaterial({ color: theme.grid });
+    scene.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(grid), gridMaterial));
+    const boxHelper = new THREE.Box3Helper(bounds.clone(), theme.box);
+    scene.add(boxHelper);
 
     const pts = [];
     const axes = AXES.map((ax) => {
@@ -499,7 +505,13 @@
       layer.appendChild(axis.title);
       return axis;
     });
-    scene.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: theme.axis })));
+    const axisMaterial = new THREE.LineBasicMaterial({ color: theme.axis });
+    scene.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts), axisMaterial));
+    ctx.themed.push((t) => {
+      gridMaterial.color.setHex(t.grid);
+      boxHelper.material.color.setHex(t.box);
+      axisMaterial.color.setHex(t.axis);
+    });
 
     const toScreen = (p, w, h) => {
       const q = p.clone().project(camera);
@@ -631,9 +643,23 @@
     root.append(header, panel);
   }
 
-  // Reset and full-screen buttons in the bottom-right corner.
+  // Light / dark, reset and full-screen buttons in the bottom-right corner.
   function addTools(ctx, resetCamera) {
     const tools = el("div", "tv-tools");
+    const themeBtn = button("tv-icon", "", "");
+    const showThemeIcon = () => {
+      const dark = ctx.root.dataset.theme === "dark";
+      themeBtn.innerHTML = dark ? ICONS.sun : ICONS.moon;
+      const label = dark ? "Light background" : "Dark background";
+      themeBtn.title = label;
+      themeBtn.setAttribute("aria-label", label);
+    };
+    themeBtn.addEventListener("click", () => {
+      ctx.setTheme(ctx.root.dataset.theme === "dark" ? "light" : "dark");
+      showThemeIcon();
+    });
+    showThemeIcon();
+    tools.appendChild(themeBtn);
     const reset = button("tv-icon", ICONS.reset, "Reset the camera");
     reset.addEventListener("click", () => { resetCamera(); ctx.draw(); });
     tools.appendChild(reset);
@@ -768,9 +794,13 @@
 
   function render(root, spec) {
     ensureStyle();
-    const themeName = THEMES[spec.theme] ? spec.theme : "light";
+    // A theme picked with the toggle button is kept on root, so a DisplayMenu keeps
+    // it when another event is picked; otherwise the scene's theme from Python.
+    const themeName = THEMES[root._trackvisTheme] ? root._trackvisTheme : THEMES[spec.theme] ? spec.theme : "light";
     root.classList.add("tv-root");
     root.dataset.theme = themeName;
+    const menuBar = root.previousElementSibling;  // a DisplayMenu's bar follows the view
+    if (menuBar && menuBar.classList.contains("tv-menu")) menuBar.dataset.theme = themeName;
     root.style.cssText += `width:100%;max-width:${spec.width}px;height:${spec.height}px;`;
 
     const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
@@ -797,6 +827,7 @@
       volumes: [],
       lineMaterials: [],
       halos: [],
+      themed: [],  // functions that recolour WebGL objects for a theme
       styleUniforms: {
         thresh: { value: style.threshold },
         density: { value: style.density },
@@ -863,6 +894,14 @@
       placeHalos();
       renderer.render(ctx.scene, camera);
       axes.placeLabels();
+    };
+    ctx.setTheme = (name) => {
+      root._trackvisTheme = name;
+      root.dataset.theme = name;
+      if (menuBar && menuBar.classList.contains("tv-menu")) menuBar.dataset.theme = name;
+      ctx.theme = THEMES[name];
+      for (const f of ctx.themed) f(ctx.theme);
+      ctx.draw();
     };
     addPanel(ctx, resetCamera);  // after ctx.draw exists: controls apply their initial state
     addTools(ctx, resetCamera);

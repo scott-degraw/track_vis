@@ -51,8 +51,9 @@ disp.add_line(axis_points, "reconstructed axis", color="#2ca02c", dashed=True)
 In the page you can drag to rotate, scroll to zoom and right-drag to pan. The title sits
 in the top-left corner; the controls start hidden: click "Options" next to it to show them.
 The layer list in the panel doubles as the legend. Buttons in the bottom-right corner
-reset the camera and go full screen. `EventDisplay(theme="dark")` gives a dark
-background, on which faint voxels and the bright end of the colour scales stand out. Sliders set
+switch between a light and a dark background, reset the camera and go full screen.
+On the dark background faint voxels and the bright end of the colour scales stand out;
+`EventDisplay(theme="dark")` starts a display dark. Sliders set
 the volume threshold, opacity (density) and opacity curve (gamma). Checkboxes switch
 on trilinear smoothing or a maximum-intensity projection, and toggle each layer.
 Hovering shows the time and deposit of the nearest track step or vertex, or else the
