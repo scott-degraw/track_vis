@@ -789,7 +789,9 @@
       box.appendChild(ticks);
       card.appendChild(box);
 
-      // pick = {name, reversed}; name null is the scale given in Python.
+      // The named scale Python used, if any; a custom scale is offered as "custom".
+      const given = Object.keys(scales).find((n) => JSON.stringify(scales[n]) === JSON.stringify(bar.stops)) || null;
+      // pick = {name, reversed}; name null is the custom scale given in Python.
       const apply = (pick, redraw = true) => {
         chosen[bar.key] = pick;
         let stops = pick.name && scales[pick.name] ? scales[pick.name] : bar.stops;
@@ -799,7 +801,7 @@
         else for (const layer of ctx.layers) if (layer.colorbar === bar.title && layer.recolor) layer.recolor(stops);
         if (redraw) ctx.draw();
       };
-      const current = () => chosen[bar.key] || { name: null, reversed: false };
+      const current = () => chosen[bar.key] || { name: given, reversed: false };
       if (chosen[bar.key]) apply(chosen[bar.key], false);
       else ramp.style.background = cssGradient(bar.stops);
 
@@ -811,7 +813,7 @@
         menu._bar = bar;
         menu.setAttribute("role", "menu");
         menu.appendChild(el("div", "tv-section", bar.title));
-        const options = [[null, "as given"], ...Object.keys(scales).map((n) => [n, n])];
+        const options = [...(given ? [] : [[null, "custom"]]), ...Object.keys(scales).map((n) => [n, n])];
         const previews = [];
         const paintPreviews = () => {
           for (const [r, name] of previews) {

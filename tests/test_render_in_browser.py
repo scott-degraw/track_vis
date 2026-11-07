@@ -82,6 +82,9 @@ def test_page_renders_without_errors(browser, tmp_path, tracks, vertices):
     # Clicking the time colour bar offers the built-in scales; picking one recolours the tracks.
     before = page.evaluate("document.querySelector('.track-vis')._trackvis.layers[1].swatch.fill")
     page.get_by_role("button", name="Time (ns)").click()
+    # The scale Python used (plasma) is marked as the current one; there is no "custom" entry.
+    assert page.get_by_role("menuitemradio", name="plasma").get_attribute("aria-checked") == "true"
+    assert page.get_by_role("menuitemradio", name="custom").count() == 0
     page.get_by_role("menuitemradio", name="viridis").click()
     after = page.evaluate("document.querySelector('.track-vis')._trackvis.layers[1].swatch.fill")
     assert after != before
