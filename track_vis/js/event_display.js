@@ -181,6 +181,7 @@
   --tv-btn:rgba(30,35,46,.9);--tv-btn-hover:#2a303c;--tv-tip:rgba(236,239,244,.96);--tv-tip-ink:#161b24;
   --tv-shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.35)}
 .tv-root *{box-sizing:border-box}
+.tv-root{container-type:inline-size}
 .tv-root:fullscreen{max-width:none!important;width:100vw!important;height:100vh!important;border-radius:0;border:0}
 .tv-card{background:var(--tv-card);border:1px solid var(--tv-card-border);border-radius:10px;box-shadow:var(--tv-shadow);
   -webkit-backdrop-filter:blur(10px) saturate(1.2);backdrop-filter:blur(10px) saturate(1.2)}
@@ -198,7 +199,7 @@
 .tv-header>*{pointer-events:auto}
 .tv-title{font-size:13px;font-weight:600;letter-spacing:-.005em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
   pointer-events:none;text-shadow:0 0 6px var(--tv-bg1)}
-.tv-panel{position:absolute;left:12px;top:50px;width:264px;max-height:calc(100% - 96px);overflow:auto;padding:10px 12px}
+.tv-panel{position:absolute;z-index:3;left:12px;top:50px;width:264px;max-height:calc(100% - 96px);overflow:auto;padding:10px 12px}
 .tv-section{font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--tv-ink3);margin:2px 0 6px}
 .tv-section:not(:first-child){margin-top:12px;padding-top:10px;border-top:1px solid var(--tv-card-border)}
 .tv-slider{display:grid;grid-template-columns:62px 1fr 34px;align-items:center;gap:8px;margin:3px 0;color:var(--tv-ink2)}
@@ -241,6 +242,15 @@
   padding:5px 10px;max-width:100%;min-width:0;flex:0 1 auto;box-shadow:0 1px 2px rgba(16,24,40,.06);cursor:pointer}
 .tv-menu[data-theme=dark] .tv-select,.tv-menu[data-theme=dark] .tv-btn{color:#e6e9ef;background:#1a1f29;border-color:#2c3340}
 .tv-menu[data-theme=dark] .tv-btn:hover{background:#2a303c}
+@container (max-width:560px){
+  .tv-bars{width:136px;padding:7px 9px 5px;gap:6px}
+  .tv-bar-ticks span:nth-child(2){display:none}
+  .tv-header{right:160px;align-items:flex-start}
+  .tv-title{white-space:normal;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;font-size:12px;line-height:1.3;padding-top:4px}
+  .tv-panel{width:calc(100% - 24px);max-width:264px}
+  .tv-status{display:none}
+}
+@media (prefers-reduced-motion:reduce){.tv-root *{transition:none!important}}
 `;
 
   const ICONS = {
@@ -777,7 +787,10 @@
       if (!hit) { setStatus(baseStatus, false); return; }
       const { spec } = hit.vol;
       const centre = hit.idx.map((k, a) => fmt(+(spec.origin[a] + (k + 0.5) * spec.voxel_size).toFixed(1)));
-      setStatus(`${spec.name}: voxel (${centre.join(", ")}) mm · ${spec.colorbar_title} ${(hit.u * spec.e_max).toPrecision(3)}`, true);
+      // "Image (MeV)" reads as "Image 0.494 MeV".
+      const [quantity, unit] = splitName(spec.colorbar_title);
+      const value = `${quantity} ${(hit.u * spec.e_max).toPrecision(3)}${unit ? " " + unit : ""}`;
+      setStatus(`${spec.name} · voxel at (${centre.join(", ")}) mm · ${value}`, true);
     }
 
     let pending = null;  // coalesce mouse moves to one update per frame
@@ -810,6 +823,8 @@
     renderer.setPixelRatio(pixelRatio);
     renderer.setClearColor(0x000000, 0);
     renderer.domElement.style.display = "block";
+    renderer.domElement.setAttribute("role", "img");
+    renderer.domElement.setAttribute("aria-label", spec.title ? `3D event display: ${spec.title}` : "3D event display");
     root.appendChild(renderer.domElement);
 
     const camera = new THREE.PerspectiveCamera(32, 1, 1, 1e7);
@@ -853,13 +868,16 @@
     }
     const axes = addAxes(ctx);
 
-    // Frame the box's bounding sphere, with room for the tick labels.
+    // Frame the box's bounding sphere, with room for the tick labels, in the
+    // narrower of the vertical and horizontal fields of view (a tall, narrow view
+    // such as a phone screen is limited by its width).
     const centre = ctx.bounds.getCenter(new THREE.Vector3());
     const radius = 0.5 * ctx.bounds.getSize(new THREE.Vector3()).length();
-    const distance = (1.12 * radius) / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2));
     const viewDir = new THREE.Vector3(1.0, -1.4, 0.8).normalize();
     const resetCamera = () => {
-      camera.position.copy(centre).addScaledVector(viewDir, distance);
+      const halfV = THREE.MathUtils.degToRad(camera.fov / 2);
+      const half = Math.min(halfV, Math.atan(Math.tan(halfV) * camera.aspect));
+      camera.position.copy(centre).addScaledVector(viewDir, (1.12 * radius) / Math.sin(half));
       controls.target.copy(centre);
       controls.update();
     };
@@ -920,6 +938,7 @@
       delete root._trackvis;
     };
     resize();
+    resetCamera();  // again, now that the aspect ratio is known
     ctx.draw();
     root._trackvis = ctx;  // for debugging from the console, and for dispose
   }
