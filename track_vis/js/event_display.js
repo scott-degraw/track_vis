@@ -372,8 +372,25 @@
 
   function addPanel(ctx, resetCamera) {
     const { spec, styleUniforms: u, volumes, layers } = ctx;
-    const panel = el("div", PANEL_STYLE);
+    const box = el("div", PANEL_STYLE);
+    // The title and controls start hidden behind an "options" button so they don't
+    // cover the view on small screens. The open/closed choice is kept on root, so a
+    // DisplayMenu remembers it when another event is picked.
+    const toggle = el("button", "font:inherit;padding:1px 8px;cursor:pointer;white-space:nowrap");
+    toggle.type = "button";
+    const panel = el("div", "margin-top:4px");
+    box.append(toggle, panel);
     if (spec.title) panel.appendChild(el("div", "font-weight:600;max-width:260px", spec.title));
+    const setOpen = (open) => {
+      ctx.root._trackvisPanelOpen = open;
+      panel.style.display = open ? "" : "none";
+      box.style.padding = open ? "6px 8px" : "2px";
+      toggle.textContent = open ? "\u25be options" : "\u25b8 options";
+      toggle.setAttribute("aria-expanded", String(open));
+      toggle.title = open ? "hide the controls" : "show the controls";
+    };
+    toggle.addEventListener("click", () => setOpen(!ctx.root._trackvisPanelOpen));
+    setOpen(Boolean(ctx.root._trackvisPanelOpen));
 
     const slider = (label, min, max, step, value, apply) => {
       const row = el("label", "display:flex;align-items:center;gap:6px");
@@ -424,7 +441,7 @@
     const reset = el("button", "margin-top:2px;font:inherit;padding:1px 8px;cursor:pointer", "reset view");
     reset.addEventListener("click", () => { resetCamera(); ctx.draw(); });
     panel.appendChild(reset);
-    ctx.root.appendChild(panel);
+    ctx.root.appendChild(box);
   }
 
   // One colour bar per volume plus spec.colorbars (the shared time bar), right to left.
