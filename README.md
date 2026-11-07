@@ -48,7 +48,8 @@ disp.add_volume(centers=centers, energies=energies, voxel_size=100)  # regular-g
 disp.add_line(axis_points, "reconstructed axis", color="#2ca02c", dashed=True)
 ```
 
-In the page you can drag to rotate, scroll to zoom and right-drag to pan. Sliders set
+In the page you can drag to rotate, scroll to zoom and right-drag to pan. The title and
+controls start hidden: click "options" in the top-left corner to show them. Sliders set
 the volume threshold, opacity (density) and opacity curve (gamma). Checkboxes switch
 on trilinear smoothing or a maximum-intensity projection, and toggle each layer.
 Hovering shows the time and deposit of the nearest track step or vertex, or else the

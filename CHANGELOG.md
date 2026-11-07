@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.2
+
+- The title and controls (sliders, checkboxes, reset view) now start hidden
+  behind an "options" button in the top-left corner, so they don't cover the
+  view on small screens. Click it to show or hide them. In a `DisplayMenu`
+  they stay open or closed when you pick another display.
+
 ## 0.2.1
 
 - Fix: displays drew nothing ("THREE is not defined") on pages with an AMD

@@ -71,6 +71,14 @@ def test_page_renders_without_errors(browser, tmp_path, tracks, vertices):
     labels = page.locator(".track-vis label").all_inner_texts()
     assert sum("smooth" in t or "max-intensity" in t for t in labels) == 2
     assert len(labels) == 3 + 2 + 6  # sliders, render-mode checkboxes, layers
+    # The controls start hidden behind the "options" button, which shows and hides them.
+    options = page.get_by_role("button", name="options")
+    assert options.get_attribute("aria-expanded") == "false"
+    assert not page.get_by_text("reset view").is_visible()
+    options.click()
+    assert page.get_by_text("reset view").is_visible()
+    options.click()
+    assert not page.get_by_text("reset view").is_visible()
     # Something other than the white background was drawn.
     coloured = page.evaluate(
         """() => {
@@ -100,9 +108,11 @@ def test_menu_switches_scenes(browser, tmp_path, tracks, vertices):
     page.goto(path.as_uri())
     page.wait_for_function("document.querySelector('.track-vis div')?._trackvis !== undefined", timeout=15000)
     assert page.locator(".track-vis canvas").count() == 1
+    page.get_by_role("button", name="options").click()  # open the controls
     page.select_option(".track-vis select", "1")
     page.wait_for_function("document.querySelector('.track-vis div')._trackvis?.spec.title === 'second'", timeout=15000)
     assert page.locator(".track-vis canvas").count() == 1  # the first view was disposed
+    assert page.get_by_text("reset view").is_visible()  # the next event keeps them open
     assert errors == []
     page.close()
 
