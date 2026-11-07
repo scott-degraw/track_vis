@@ -69,6 +69,31 @@ def test_bounds_set_the_view_box():
         EventDisplay(bounds=[[0, 0, 0], [0, 1, 1]])
 
 
+def test_scale_links_let_the_page_recolour(tracks, vertices):
+    d = EventDisplay().add_tracks(**tracks, t_min=0.0, t_max=2.0).add_vertices(**vertices, t_min=0.0, t_max=2.0)
+    for layer in d.scene.lines + d.scene.points:
+        assert layer.scale.colorbar == "Time (ns)"
+        n = len(layer.segments) if hasattr(layer, "segments") else len(layer.positions)
+        assert layer.scale.u.shape == (n,) and np.all((layer.scale.u >= 0) & (layer.scale.u <= 1))
+    # A line in one colour has no scale to change.
+    assert EventDisplay().add_line([[0, 0, 0], [1, 1, 1]]).scene.lines[0].scale is None
+    js = d.scene.to_json()
+    assert set(js["colorscales"]) >= {"plasma", "viridis"} and js["lines"][0]["scale"]["colorbar"] == "Time (ns)"
+
+
+def test_line_colorbar_title():
+    d = EventDisplay().add_line([[0, 0, 0], [1, 1, 1]], values=[0.0, 4.0], colorbar_title="dE/dx")
+    assert [b.title for b in d.scene.colorbars] == ["dE/dx"]
+    assert d.scene.lines[0].scale.u.tolist() == [0.0, 1.0]
+
+
+def test_theme():
+    assert EventDisplay().scene.to_json()["theme"] == "light"
+    assert EventDisplay(theme="dark").scene.to_json()["theme"] == "dark"
+    with pytest.raises(ValueError, match="theme"):
+        EventDisplay(theme="blue")
+
+
 def test_menu_labels_default_to_titles():
     menu = DisplayMenu([EventDisplay(title="a"), EventDisplay()])
     assert menu.labels == ["a", "display 1"]

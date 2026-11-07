@@ -24,12 +24,13 @@ import numpy as np
 from track_vis import browser
 from track_vis.colors import colorscale_stops, hex_to_rgb, sample_colorscale
 from track_vis.io import particle_name
-from track_vis.scene import Colorbar, LineLayer, PointLayer, Scene, VolumeLayer, VolumeStyle
+from track_vis.scene import Colorbar, LineLayer, PointLayer, ScaleLink, Scene, VolumeLayer, VolumeStyle
 from track_vis.voxels import bin_deposits, voxelize
 
 TIME_COLORSCALE = "plasma"
 VOXEL_COLORSCALE = "plasma"
 TIME_COLORBAR_TITLE = "Time (ns)"
+THEMES = ("light", "dark")
 
 
 def _to_numpy(a) -> np.ndarray:
@@ -54,6 +55,13 @@ def _colors(values, vmin, vmax, colorscale, color: str, n: int) -> np.ndarray:
     return sample_colorscale(colorscale, (values - lo) / ((hi - lo) or 1.0))
 
 
+def _scale_positions(values, vmin, vmax) -> np.ndarray:
+    """Return the positions in [0, 1] of `values` on a colour scale over [vmin, vmax]."""
+    values = np.asarray(values, dtype=float)
+    lo, hi = _value_range(values, vmin, vmax)
+    return np.clip((values - lo) / ((hi - lo) or 1.0), 0.0, 1.0)
+
+
 def _value_range(values, vmin, vmax) -> tuple[float, float]:
     """Return (vmin, vmax), each defaulting to the min or max of `values`."""
     values = np.asarray(values, dtype=float)
@@ -69,13 +77,13 @@ def _is_single_path(points) -> bool:
 
 
 def _polyline_segments(paths: list[np.ndarray], colors: list[np.ndarray]) -> tuple[np.ndarray, np.ndarray]:
-    """Split polylines (each (N, 3), with per-point RGB) into segment end points, two rows per segment."""
+    """Split polylines (each (N, 3), with per-point (N, k) values such as RGB) into segment end points, two rows per segment."""
     seg, col = [], []
     for p, c in zip(paths, colors):
         if len(p) < 2:
             continue
         seg.append(np.stack([p[:-1], p[1:]], axis=1).reshape(-1, 3))
-        col.append(np.stack([c[:-1], c[1:]], axis=1).reshape(-1, 3))
+        col.append(np.stack([c[:-1], c[1:]], axis=1).reshape(-1, c.shape[1]))
     if not seg:
         return np.zeros((0, 3)), np.zeros((0, 3))
     return np.concatenate(seg), np.concatenate(col)
@@ -99,7 +107,7 @@ class EventDisplay:
     Parameters
     ----------
     title : str, optional
-        Text shown at the top of the control panel. Default is None.
+        Text shown in the top-left corner of the view. Default is None.
     width : int, optional
         Maximum width of the view in CSS pixels. Default is 900.
     height : int, optional
@@ -121,6 +129,10 @@ class EventDisplay:
         in mm, e.g. to give several displays the same view or to keep far
         away hidden layers from shrinking the event. Default is None, which
         fits the box to all layers.
+    theme : {"light", "dark"}, optional
+        Starting background, axes and control colours; a button in the view
+        switches between them. "dark" makes faint voxels and the bright end of
+        the colour scales stand out. Default is "light".
 
     Attributes
     ----------
@@ -138,7 +150,10 @@ class EventDisplay:
         gamma: float = 2.0,
         smooth: bool = False,
         bounds=None,
+        theme: str = "light",
     ):
+        if theme not in THEMES:
+            raise ValueError(f"theme must be one of {THEMES}, not {theme!r}")
         if bounds is not None:
             bounds = np.asarray(bounds, dtype=float)
             if bounds.shape != (2, 3) or np.any(bounds[1] <= bounds[0]):
@@ -149,6 +164,7 @@ class EventDisplay:
             height=int(height),
             style=VolumeStyle(threshold=threshold, density=density, gamma=gamma, smooth=smooth),
             bounds=bounds,
+            theme=theme,
         )
 
     # ------------------------------------------------------------------ volumes
@@ -315,6 +331,7 @@ class EventDisplay:
         dashed: bool = False,
         dash: float = 20.0,
         hover_text: list[str] | None = None,
+        colorbar_title: str | None = None,
         visible: bool = True,
     ) -> EventDisplay:
         """
@@ -345,6 +362,10 @@ class EventDisplay:
             Dash length (mm). Default is 20.0.
         hover_text : list of str, optional
             One hover string per point, flattened over all polylines.
+        colorbar_title : str, optional
+            With `values`, also show a colour bar with this title (a later
+            bar with the same title replaces it); the colour scale can then be
+            changed from the bar in the page. Default is None, no bar.
         visible : bool, optional
             Whether the layer starts visible. Default is True.
 
@@ -365,7 +386,12 @@ class EventDisplay:
         lengths = [len(p) for p in paths]
         flat_values = None if values is None else np.concatenate([np.asarray(v, float) for v in values])
         rgb = _colors(flat_values, vmin, vmax, colorscale, color, sum(lengths))
-        segments, segment_colors = _polyline_segments(paths, np.split(rgb, np.cumsum(lengths)[:-1]))
+        splits = np.cumsum(lengths)[:-1]
+        segments, segment_colors = _polyline_segments(paths, np.split(rgb, splits))
+        scale = None
+        if flat_values is not None and colorbar_title is not None:
+            u = _scale_positions(flat_values, vmin, vmax)[:, None]
+            scale = ScaleLink(colorbar_title, _polyline_segments(paths, np.split(u, splits))[1][:, 0])
         hover_points = None
         if hover_text is not None:
             hover_points = np.concatenate(paths)
@@ -383,8 +409,11 @@ class EventDisplay:
                 hover_points=hover_points,
                 hover_text=hover_text,
                 visible=visible,
+                scale=scale,
             )
         )
+        if scale is not None:
+            self._set_colorbar(colorbar_title, colorscale, *_value_range(flat_values, vmin, vmax))
         return self
 
     def add_tracks(
@@ -454,6 +483,7 @@ class EventDisplay:
                 colorscale=colorscale,
                 width=width,
                 hover_text=texts,
+                colorbar_title=TIME_COLORBAR_TITLE,
             )
         self._set_colorbar(TIME_COLORBAR_TITLE, colorscale, t_min, t_max)
         return self
@@ -519,8 +549,11 @@ class EventDisplay:
         text = [str(t) for t in hover_text] if hover_text is not None else [""] * len(pts)
         if len(text) != len(pts):
             raise ValueError("hover_text needs one entry per point")
+        scale = None
+        if values is not None and colorbar_title is not None:
+            scale = ScaleLink(colorbar_title, _scale_positions(values, vmin, vmax))
         self.scene.points.append(
-            PointLayer(name=name, positions=pts, colors=rgb, size=size, hover_text=text, visible=visible)
+            PointLayer(name=name, positions=pts, colors=rgb, size=size, hover_text=text, visible=visible, scale=scale)
         )
         if values is not None and colorbar_title is not None:
             lo, hi = _value_range(values, vmin, vmax)
@@ -585,6 +618,7 @@ class EventDisplay:
                 colorscale=colorscale,
                 size=size,
                 hover_text=[f"E = {energy[i]:.3f} MeV, t = {t[i]:.2f} ns" for i in idx],
+                colorbar_title=TIME_COLORBAR_TITLE,
             )
         self._set_colorbar(TIME_COLORBAR_TITLE, colorscale, t_min, t_max)
         return self

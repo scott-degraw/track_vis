@@ -1,6 +1,6 @@
 [project]
 name = "track_vis"
-version = "0.2.2"
+version = "0.3.0"
 description = "three.js 3D event display for particle tracks, truth vertices and voxel images"
 readme = "README.md"
 requires-python = ">=3.10"

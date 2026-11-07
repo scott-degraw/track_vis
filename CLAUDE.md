@@ -24,6 +24,9 @@ uv run pytest
 uv run playwright install chromium
 TRACK_VIS_REQUIRE_BROWSER=1 uv run pytest tests/test_render_in_browser.py
 
+# Write a gallery of synthetic event pages (light or dark) to look at the renderer
+uv run python examples/gallery.py /tmp/gallery --theme dark
+
 # Run the example notebook end-to-end and write outputs in place
 uv run jupyter nbconvert --to notebook --execute --inplace examples/synthetic_event.ipynb
 
@@ -62,7 +65,11 @@ JavaScript halves are kept apart so the Python can be read on its own:
 Volumes are `uint8` 3D textures ray-marched in a GLSL3 fragment shader: exact
 voxel traversal (Amanatides & Woo) in sharp mode, quarter-voxel jittered
 sampling in smooth mode, plus maximum-intensity projection. All volumes share
-the threshold/density/gamma sliders. three.js stays on r147, the last release
+the threshold/density/gamma sliders. Page elements are styled by one stylesheet
+(`STYLE`, classes `tv-*`) with light and dark CSS variables; `EventDisplay(theme=...)`
+picks one, and `THEMES` holds the matching WebGL colours. Clicking a colour bar
+swaps its scale in the page: line and marker layers carry a `ScaleLink` (their
+positions in [0, 1] on a named colour bar) so the JS can resample their colours. three.js stays on r147, the last release
 with classic (non-module) scripts, which load without import maps in
 CSP-restricted pages such as claude.ai artifacts.
 

@@ -48,12 +48,18 @@ disp.add_volume(centers=centers, energies=energies, voxel_size=100)  # regular-g
 disp.add_line(axis_points, "reconstructed axis", color="#2ca02c", dashed=True)
 ```
 
-In the page you can drag to rotate, scroll to zoom and right-drag to pan. The title and
-controls start hidden: click "options" in the top-left corner to show them. Sliders set
+In the page you can drag to rotate, scroll to zoom and right-drag to pan. The title sits
+in the top-left corner; the controls start hidden: click "Options" next to it to show them.
+The layer list in the panel doubles as the legend. Buttons in the bottom-right corner
+switch between a light and a dark background, reset the camera and go full screen.
+Click a colour bar to pick another colour scale (or reverse it) for what it colours.
+On the dark background faint voxels and the bright end of the colour scales stand out;
+`EventDisplay(theme="dark")` starts a display dark. Sliders set
 the volume threshold, opacity (density) and opacity curve (gamma). Checkboxes switch
 on trilinear smoothing or a maximum-intensity projection, and toggle each layer.
 Hovering shows the time and deposit of the nearest track step or vertex, or else the
-brightest voxel under the cursor. Three box edges carry labelled mm ticks.
+brightest voxel under the cursor. Three box edges carry labelled mm ticks, with a faint
+grid on the floor of the box at the same spacing.
 
 ## API
 
@@ -65,16 +71,16 @@ per vertex. Units: mm, ns, MeV.
 
 | Method / function | Description |
 | --- | --- |
-| `EventDisplay(title, width, height, threshold, density, gamma, smooth, bounds)` | A scene. The volume style arguments set the initial slider values; `bounds=[[x0, y0, z0], [x1, y1, z1]]` fixes the view box (default: fit all layers). Every `add_*` returns the display, so calls chain. |
+| `EventDisplay(title, width, height, threshold, density, gamma, smooth, bounds, theme)` | A scene. `theme` is `"light"` (default) or `"dark"`. The volume style arguments set the initial slider values; `bounds=[[x0, y0, z0], [x1, y1, z1]]` fixes the view box (default: fit all layers). Every `add_*` returns the display, so calls chain. |
 | `.add_tracks(pdg, pos_x, pos_y, pos_z, time, deposited_energy, t_min, t_max)` | Truth tracks coloured by step time, one toggleable layer per species. |
 | `.add_vertices(pdg, x, y, z, t, energy, t_min, t_max)` | Truth vertex markers coloured by time, one layer per species. Use the same `t_min`/`t_max` as the tracks to share the time colour bar. |
 | `.add_deposits(pos_x, pos_y, pos_z, deposited_energy, voxel_size=100)` | Bins per-step deposits into cubes aligned to multiples of `voxel_size` and adds them as a volume. |
 | `.add_volume(grid, origin, voxel_size)` or `.add_volume(centers=, energies=, voxel_size=)` | A voxel image, ray-marched on the GPU. `e_max` fixes the colour/opacity scale for comparing events. |
-| `.add_line(points, name, color= / values=, dashed=, width=)` | A polyline (or a list of them in one layer), in one colour or coloured by per-point values. |
+| `.add_line(points, name, color= / values=, dashed=, width=, colorbar_title=)` | A polyline (or a list of them in one layer), in one colour or coloured by per-point values; with `colorbar_title` they get a colour bar. |
 | `.add_points(points, name, color= / values=, size=, colorbar_title=)` | Round markers; with `values` and `colorbar_title` they get their own colour bar. |
 | `.to_html(lib="cdn")`, `.write_html(path, lib="inline")` | HTML output. `lib="cdn"` loads three.js r147 from a pinned jsDelivr URL; `lib="inline"` embeds the copy vendored in `track_vis/js/vendor` (MIT). |
 | `.scene` | The `Scene` built so far: plain dataclasses of NumPy arrays (see `scene.py`). |
-| `DisplayMenu(displays, labels)` | Several displays in one view with a drop-down to pick one (e.g. one per event). Only the shown one holds a WebGL context. Same `to_html`/`write_html`. |
+| `DisplayMenu(displays, labels)` | Several displays in one view with a drop-down and previous / next buttons to pick one (e.g. one per event). Only the shown one holds a WebGL context. Same `to_html`/`write_html`. |
 | `load_event(path, index)` | Opens an `imaging_reco` ntuple and returns `(tracks, vertices)` kwargs dicts. |
 | `voxelize(centers, values, voxel_size)`, `bin_deposits(points, energies, voxel_size)` | Dense `(grid, origin)` from sparse voxels or point deposits. |
 | `sample_colorscale(name, u)`, `COLORSCALES` | Built-in colour scales: plasma, viridis, inferno, magma, cividis, turbo. |
