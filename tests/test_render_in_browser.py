@@ -79,6 +79,14 @@ def test_page_renders_without_errors(browser, tmp_path, tracks, vertices):
     assert page.get_by_text("reset view").is_visible()
     options.click()
     assert not page.get_by_text("reset view").is_visible()
+    # Clicking the time colour bar offers the built-in scales; picking one recolours the tracks.
+    before = page.evaluate("document.querySelector('.track-vis')._trackvis.layers[1].swatch.fill")
+    page.get_by_role("button", name="Time (ns)").click()
+    page.get_by_role("menuitemradio", name="viridis").click()
+    after = page.evaluate("document.querySelector('.track-vis')._trackvis.layers[1].swatch.fill")
+    assert after != before
+    page.keyboard.press("Escape")
+    assert page.get_by_role("menuitemradio").count() == 0
     # Something was drawn: the canvas is transparent over the CSS background.
     coloured = page.evaluate(
         """() => {

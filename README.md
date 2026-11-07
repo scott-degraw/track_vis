@@ -52,6 +52,7 @@ In the page you can drag to rotate, scroll to zoom and right-drag to pan. The ti
 in the top-left corner; the controls start hidden: click "Options" next to it to show them.
 The layer list in the panel doubles as the legend. Buttons in the bottom-right corner
 switch between a light and a dark background, reset the camera and go full screen.
+Click a colour bar to pick another colour scale (or reverse it) for what it colours.
 On the dark background faint voxels and the bright end of the colour scales stand out;
 `EventDisplay(theme="dark")` starts a display dark. Sliders set
 the volume threshold, opacity (density) and opacity curve (gamma). Checkboxes switch
@@ -75,7 +76,7 @@ per vertex. Units: mm, ns, MeV.
 | `.add_vertices(pdg, x, y, z, t, energy, t_min, t_max)` | Truth vertex markers coloured by time, one layer per species. Use the same `t_min`/`t_max` as the tracks to share the time colour bar. |
 | `.add_deposits(pos_x, pos_y, pos_z, deposited_energy, voxel_size=100)` | Bins per-step deposits into cubes aligned to multiples of `voxel_size` and adds them as a volume. |
 | `.add_volume(grid, origin, voxel_size)` or `.add_volume(centers=, energies=, voxel_size=)` | A voxel image, ray-marched on the GPU. `e_max` fixes the colour/opacity scale for comparing events. |
-| `.add_line(points, name, color= / values=, dashed=, width=)` | A polyline (or a list of them in one layer), in one colour or coloured by per-point values. |
+| `.add_line(points, name, color= / values=, dashed=, width=, colorbar_title=)` | A polyline (or a list of them in one layer), in one colour or coloured by per-point values; with `colorbar_title` they get a colour bar. |
 | `.add_points(points, name, color= / values=, size=, colorbar_title=)` | Round markers; with `values` and `colorbar_title` they get their own colour bar. |
 | `.to_html(lib="cdn")`, `.write_html(path, lib="inline")` | HTML output. `lib="cdn"` loads three.js r147 from a pinned jsDelivr URL; `lib="inline"` embeds the copy vendored in `track_vis/js/vendor` (MIT). |
 | `.scene` | The `Scene` built so far: plain dataclasses of NumPy arrays (see `scene.py`). |

@@ -67,7 +67,9 @@ voxel traversal (Amanatides & Woo) in sharp mode, quarter-voxel jittered
 sampling in smooth mode, plus maximum-intensity projection. All volumes share
 the threshold/density/gamma sliders. Page elements are styled by one stylesheet
 (`STYLE`, classes `tv-*`) with light and dark CSS variables; `EventDisplay(theme=...)`
-picks one, and `THEMES` holds the matching WebGL colours. three.js stays on r147, the last release
+picks one, and `THEMES` holds the matching WebGL colours. Clicking a colour bar
+swaps its scale in the page: line and marker layers carry a `ScaleLink` (their
+positions in [0, 1] on a named colour bar) so the JS can resample their colours. three.js stays on r147, the last release
 with classic (non-module) scripts, which load without import maps in
 CSP-restricted pages such as claude.ai artifacts.
 

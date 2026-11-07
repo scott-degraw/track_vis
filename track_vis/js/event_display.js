@@ -220,7 +220,18 @@
 .tv-swatch.volume{width:12px;height:12px;border-radius:3px}
 .tv-swatch.dashed{-webkit-mask:repeating-linear-gradient(90deg,#000 0 5px,transparent 5px 8px);mask:repeating-linear-gradient(90deg,#000 0 5px,transparent 5px 8px)}
 .tv-panel .tv-btn{margin-top:10px}
-.tv-bars{position:absolute;right:12px;top:12px;width:188px;padding:9px 12px 7px;display:flex;flex-direction:column;gap:9px;pointer-events:none}
+.tv-bars{position:absolute;z-index:2;right:12px;top:12px;width:188px;padding:5px 6px 3px;display:flex;flex-direction:column;gap:2px}
+.tv-bar{display:block;width:100%;text-align:left;font:inherit;color:inherit;background:none;border:0;border-radius:7px;padding:4px 6px 4px;cursor:pointer}
+.tv-bar:hover{background:var(--tv-btn-hover)}
+.tv-bar:focus-visible{outline:2px solid var(--tv-accent);outline-offset:0}
+.tv-scale-menu{position:absolute;z-index:4;right:208px;width:176px;padding:8px;display:flex;flex-direction:column;gap:1px}
+.tv-scale-menu .tv-section{margin:0 4px 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tv-scale-opt{display:flex;align-items:center;gap:8px;font:inherit;color:var(--tv-ink);background:none;border:0;border-radius:6px;padding:4px 6px;cursor:pointer;text-align:left}
+.tv-scale-opt:hover{background:var(--tv-btn-hover)}
+.tv-scale-opt[aria-checked=true]{background:var(--tv-btn-hover);font-weight:600}
+.tv-scale-opt:focus-visible{outline:2px solid var(--tv-accent)}
+.tv-scale-ramp{flex:none;width:56px;height:8px;border-radius:4px}
+.tv-scale-menu .tv-switch{margin:4px 6px 0;padding-top:6px;border-top:1px solid var(--tv-card-border)}
 .tv-bar-title{font-weight:500;color:var(--tv-ink2);margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tv-bar-ramp{height:8px;border-radius:4px;box-shadow:inset 0 0 0 1px rgba(127,127,127,.18)}
 .tv-bar-ticks{display:flex;justify-content:space-between;margin-top:3px;font-size:11px;color:var(--tv-ink2);font-variant-numeric:tabular-nums}
@@ -243,7 +254,8 @@
 .tv-menu[data-theme=dark] .tv-select,.tv-menu[data-theme=dark] .tv-btn{color:#e6e9ef;background:#1a1f29;border-color:#2c3340}
 .tv-menu[data-theme=dark] .tv-btn:hover{background:#2a303c}
 @container (max-width:560px){
-  .tv-bars{width:136px;padding:7px 9px 5px;gap:6px}
+  .tv-bars{width:136px;padding:3px 4px 2px;gap:0}
+  .tv-scale-menu{right:156px}
   .tv-bar-ticks span:nth-child(2){display:none}
   .tv-header{right:160px;align-items:flex-start}
   .tv-title{white-space:normal;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;font-size:12px;line-height:1.3;padding-top:4px}
@@ -306,19 +318,39 @@
     return [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
   }
 
-  // [[pos, "#rrggbb"], ...] -> 256 x 1 RGBA texture, linearly interpolated.
-  function colorscaleTexture(stops) {
+  // A function x in [0, 1] -> [r, g, b] in 0..255, linear between the stops
+  // [[pos, "#rrggbb"], ...] (the same interpolation as colors.sample_colorscale).
+  function scaleSampler(stops) {
     const col = stops.map(([p, h]) => [p, ...hexToRgb(h)]);
-    const data = new Uint8Array(256 * 4);
-    for (let i = 0; i < 256; i++) {
-      const x = i / 255;
+    return (x) => {
       let k = 0;
       while (k < col.length - 2 && x > col[k + 1][0]) k++;
       const [p0, ...c0] = col[k];
       const [p1, ...c1] = col[k + 1];
       const f = Math.min(1, Math.max(0, (x - p0) / (p1 - p0 || 1)));
-      data.set([...c0.map((c, j) => c + f * (c1[j] - c)), 255], 4 * i);
+      return c0.map((c, j) => c + f * (c1[j] - c));
+    };
+  }
+
+  // Colour scale stops in reverse order.
+  const reverseStops = (stops) => stops.map(([p, h]) => [1 - p, h]).reverse();
+
+  // RGB in [0, 1] (as Float32Array, 3 per entry) for positions u on a scale.
+  function sampleStops(stops, u) {
+    const at = scaleSampler(stops);
+    const out = new Float32Array(3 * u.length);
+    for (let i = 0; i < u.length; i++) {
+      const c = at(u[i]);
+      out[3 * i] = c[0] / 255; out[3 * i + 1] = c[1] / 255; out[3 * i + 2] = c[2] / 255;
     }
+    return out;
+  }
+
+  // [[pos, "#rrggbb"], ...] -> 256 x 1 RGBA texture, linearly interpolated.
+  function colorscaleTexture(stops) {
+    const at = scaleSampler(stops);
+    const data = new Uint8Array(256 * 4);
+    for (let i = 0; i < 256; i++) data.set([...at(i / 255), 255], 4 * i);
     const tex = new THREE.DataTexture(data, 256, 1, THREE.RGBAFormat);
     tex.magFilter = tex.minFilter = THREE.LinearFilter;
     tex.needsUpdate = true;
@@ -339,6 +371,12 @@
     const picks = [0, 0.33, 0.66, 1].map((f) => Math.round(f * (n - 1)));
     const css = [...new Set(picks.map((i) => rgbCss(colors, i)))];
     return css.length === 1 ? css[0] : `linear-gradient(to right, ${css.join(", ")})`;
+  }
+
+  // Change a layer's legend swatch, in the panel too if it has been built.
+  function setSwatch(layer, fill) {
+    layer.swatch.fill = fill;
+    if (layer.swatchEl) layer.swatchEl.style.background = fill;
   }
 
   function expandByPositions(box, pos) {
@@ -407,7 +445,13 @@
     const volume = { spec: v, raw, tex, box, mesh };
     ctx.volumes.push(volume);
     const swatch = { kind: "volume", fill: cssGradient(v.colorscale, "135deg") };
-    ctx.layers.push({ name: v.name, objects: [mesh], visible: v.visible, swatch });
+    const layer = { name: v.name, objects: [mesh], visible: v.visible, swatch };
+    volume.recolor = (stops) => {
+      material.uniforms.cmap.value.dispose();
+      material.uniforms.cmap.value = colorscaleTexture(stops);
+      setSwatch(layer, cssGradient(stops, "135deg"));
+    };
+    ctx.layers.push(layer);
   }
 
   function addLines(ctx, ln) {
@@ -433,7 +477,17 @@
     expandByPositions(ctx.bounds, pos);
     const hover = ln.hover && { pos: b64ToFloats(ln.hover.points), text: ln.hover.text };
     const swatch = { kind: "line", dashed: ln.dashed, fill: swatchFill(colors) };
-    ctx.layers.push({ name: ln.name, objects: [halo, lines], visible: ln.visible, hover, swatch });
+    const layer = { name: ln.name, objects: [halo, lines], visible: ln.visible, hover, swatch };
+    if (ln.scale) {
+      const u = b64ToFloats(ln.scale.u);
+      layer.colorbar = ln.scale.colorbar;
+      layer.recolor = (stops) => {
+        const c = sampleStops(stops, u);
+        geometry.setColors(c);
+        setSwatch(layer, swatchFill(c));
+      };
+    }
+    ctx.layers.push(layer);
   }
 
   function addPoints(ctx, pt) {
@@ -458,7 +512,19 @@
     ctx.scene.add(points);
     expandByPositions(ctx.bounds, pos);
     const swatch = { kind: "point", fill: swatchFill(colors) };
-    ctx.layers.push({ name: pt.name, objects: [points], visible: pt.visible, swatch, hover: { pos, text: pt.hover, colors } });
+    const layer = { name: pt.name, objects: [points], visible: pt.visible, swatch, hover: { pos, text: pt.hover, colors } };
+    if (pt.scale) {
+      const u = b64ToFloats(pt.scale.u);
+      layer.colorbar = pt.scale.colorbar;
+      layer.recolor = (stops) => {
+        const c = sampleStops(stops, u);
+        geometry.attributes.color.array.set(c);
+        geometry.attributes.color.needsUpdate = true;
+        layer.hover.colors = c;
+        setSwatch(layer, swatchFill(c));
+      };
+    }
+    ctx.layers.push(layer);
   }
 
   // ---------------------------------------------------------------- axes
@@ -604,7 +670,7 @@
       panel.appendChild(row);
       update();
     };
-    const toggleRow = (label, checked, apply, swatch) => {
+    const toggleRow = (label, checked, apply, swatch, layer) => {
       const row = el("label", "tv-switch");
       const input = el("input");
       Object.assign(input, { type: "checkbox", checked });
@@ -613,6 +679,7 @@
       if (swatch) {
         const s = el("span", `tv-swatch ${swatch.kind}${swatch.dashed ? " dashed" : ""}`);
         s.style.background = swatch.fill;
+        if (layer) layer.swatchEl = s;
         row.appendChild(s);
       }
       const [main, detail] = splitName(label);
@@ -644,7 +711,7 @@
       toggleRow(layer.name, layer.visible, (on) => {
         layer.visible = on;
         for (const o of layer.objects) o.visible = on;
-      }, layer.swatch);
+      }, layer.swatch, layer);
     }
     const reset = button("", ICONS.reset + "<span>Reset view</span>");
     reset.addEventListener("click", () => { resetCamera(); ctx.draw(); });
@@ -685,25 +752,105 @@
   }
 
   // One horizontal colour bar per volume plus spec.colorbars (the shared time bar),
-  // stacked in a card in the top-right corner.
+  // stacked in a card in the top-right corner. Clicking a bar opens a menu of
+  // colour scales (spec.colorscales) that recolours what it describes: its volume,
+  // or the line and marker layers linked to it by title (layer.colorbar). The
+  // choice is kept on root, so a DisplayMenu applies it to the next event too.
   function addColorbars(ctx) {
-    const bars = ctx.spec.volumes
-      .map((v) => ({ title: v.colorbar_title, stops: v.colorscale, min: 0, max: v.e_max }))
-      .concat(ctx.spec.colorbars);
+    const { root, spec } = ctx;
+    const bars = spec.volumes
+      .map((v, i) => ({ key: `volume ${i}: ${v.colorbar_title}`, title: v.colorbar_title, stops: v.colorscale, min: 0, max: v.e_max, volume: ctx.volumes[i] }))
+      .concat(spec.colorbars.map((c) => ({ key: c.title, ...c })));
     if (!bars.length) return;
     const card = el("div", "tv-bars tv-card");
+    const chosen = (root._trackvisScales = root._trackvisScales || {});
+    const scales = spec.colorscales || {};
+    let menu = null;
+    const closeMenu = () => {
+      if (!menu) return;
+      menu.remove();
+      menu = null;
+      document.removeEventListener("pointerdown", onOutside, true);
+      document.removeEventListener("keydown", onKey, true);
+    };
+    const onOutside = (ev) => { if (menu && !menu.contains(ev.target) && !card.contains(ev.target)) closeMenu(); };
+    const onKey = (ev) => { if (ev.key === "Escape") closeMenu(); };
+
     for (const bar of bars) {
-      const box = el("div");
+      const box = el("button", "tv-bar");
+      box.type = "button";
+      box.title = "Change the colour scale";
+      box.setAttribute("aria-haspopup", "true");
       box.appendChild(el("div", "tv-bar-title", bar.title));
       const ramp = el("div", "tv-bar-ramp");
-      ramp.style.background = cssGradient(bar.stops);
       box.appendChild(ramp);
       const ticks = el("div", "tv-bar-ticks");
       for (const f of [0, 0.5, 1]) ticks.appendChild(el("span", "", fmt(+(bar.min + f * (bar.max - bar.min)).toPrecision(3))));
       box.appendChild(ticks);
       card.appendChild(box);
+
+      // pick = {name, reversed}; name null is the scale given in Python.
+      const apply = (pick, redraw = true) => {
+        chosen[bar.key] = pick;
+        let stops = pick.name && scales[pick.name] ? scales[pick.name] : bar.stops;
+        if (pick.reversed) stops = reverseStops(stops);
+        ramp.style.background = cssGradient(stops);
+        if (bar.volume) bar.volume.recolor(stops);
+        else for (const layer of ctx.layers) if (layer.colorbar === bar.title && layer.recolor) layer.recolor(stops);
+        if (redraw) ctx.draw();
+      };
+      const current = () => chosen[bar.key] || { name: null, reversed: false };
+      if (chosen[bar.key]) apply(chosen[bar.key], false);
+      else ramp.style.background = cssGradient(bar.stops);
+
+      box.addEventListener("click", () => {
+        const wasOpen = menu && menu._bar === bar;
+        closeMenu();
+        if (wasOpen) return;
+        menu = el("div", "tv-scale-menu tv-card");
+        menu._bar = bar;
+        menu.setAttribute("role", "menu");
+        menu.appendChild(el("div", "tv-section", bar.title));
+        const options = [[null, "as given"], ...Object.keys(scales).map((n) => [n, n])];
+        const previews = [];
+        const paintPreviews = () => {
+          for (const [r, name] of previews) {
+            const stops = name ? scales[name] : bar.stops;
+            r.style.background = cssGradient(current().reversed ? reverseStops(stops) : stops);
+          }
+        };
+        for (const [name, label] of options) {
+          const opt = el("button", "tv-scale-opt");
+          opt.type = "button";
+          opt.setAttribute("role", "menuitemradio");
+          opt.setAttribute("aria-checked", String(current().name === name));
+          const r = el("span", "tv-scale-ramp");
+          previews.push([r, name]);
+          opt.append(r, el("span", "", label));
+          opt.addEventListener("click", () => {
+            apply({ name, reversed: current().reversed });
+            for (const o of menu.querySelectorAll(".tv-scale-opt")) o.setAttribute("aria-checked", String(o === opt));
+          });
+          menu.appendChild(opt);
+        }
+        const rev = el("label", "tv-switch");
+        const input = el("input");
+        Object.assign(input, { type: "checkbox", checked: current().reversed });
+        rev.append(input, el("span"), el("span", "tv-name", "reversed"));
+        input.addEventListener("change", () => {
+          apply({ name: current().name, reversed: input.checked });
+          paintPreviews();
+        });
+        menu.appendChild(rev);
+        paintPreviews();
+        menu.style.top = 12 + box.offsetTop + "px";
+        root.appendChild(menu);
+        document.addEventListener("pointerdown", onOutside, true);
+        document.addEventListener("keydown", onKey, true);
+        menu.querySelector("[aria-checked=true]")?.focus();
+      });
     }
-    ctx.root.appendChild(card);
+    root.appendChild(card);
   }
 
   // ---------------------------------------------------------------- hover

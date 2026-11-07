@@ -30,6 +30,8 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from track_vis.colors import COLORSCALES, colorscale_stops
+
 
 def encode_float32(a: np.ndarray) -> str:
     """
@@ -151,6 +153,29 @@ class VolumeLayer:
 
 
 @dataclass
+class ScaleLink:
+    """
+    Ties a line or marker layer's colours to a colour bar.
+
+    Parameters
+    ----------
+    colorbar : str
+        Title of the colour bar (in `Scene.colorbars`) whose scale coloured
+        the layer.
+    u : numpy.ndarray, shape (N,)
+        Position in [0, 1] on that scale of each colour in the layer (each
+        segment end point, or each marker).
+    """
+
+    colorbar: str
+    u: np.ndarray
+
+    def to_json(self) -> dict:
+        """Return the JSON form, with `u` encoded."""
+        return {"colorbar": self.colorbar, "u": encode_float32(self.u)}
+
+
+@dataclass
 class LineLayer:
     """
     Line segments drawn with a fixed pixel width.
@@ -178,6 +203,9 @@ class LineLayer:
         One string per hover point.
     visible : bool
         Whether the layer starts visible.
+    scale : ScaleLink, optional
+        For lines coloured from a colour bar's scale: their positions on it,
+        so the page can recolour them when the scale is changed there.
     """
 
     name: str
@@ -189,6 +217,7 @@ class LineLayer:
     hover_points: np.ndarray | None = None
     hover_text: list[str] | None = None
     visible: bool = True
+    scale: ScaleLink | None = None
 
     def to_json(self) -> dict:
         """Return the JSON form of the layer, with arrays encoded."""
@@ -204,6 +233,7 @@ class LineLayer:
             "dash": float(self.dash),
             "visible": bool(self.visible),
             "hover": hover,
+            "scale": None if self.scale is None else self.scale.to_json(),
         }
 
 
@@ -226,6 +256,8 @@ class PointLayer:
         One hover string per marker.
     visible : bool
         Whether the layer starts visible.
+    scale : ScaleLink, optional
+        For markers coloured from a colour bar's scale (see `LineLayer`).
     """
 
     name: str
@@ -234,6 +266,7 @@ class PointLayer:
     size: float = 12.0
     hover_text: list[str] = field(default_factory=list)
     visible: bool = True
+    scale: ScaleLink | None = None
 
     def to_json(self) -> dict:
         """Return the JSON form of the layer, with arrays encoded."""
@@ -244,6 +277,7 @@ class PointLayer:
             "size": float(self.size),
             "hover": list(self.hover_text),
             "visible": bool(self.visible),
+            "scale": None if self.scale is None else self.scale.to_json(),
         }
 
 
@@ -297,7 +331,10 @@ class Scene:
         Fixed view box ``[[x_min, y_min, z_min], [x_max, y_max, z_max]]``
         (mm) for the axes and camera. None fits the box to all layers.
     theme : {"light", "dark"}
-        Colours of the background, axes and controls.
+        Starting colours of the background, axes and controls.
+
+    The JSON also carries ``colorscales``, the built-in scales (name to
+    stops) offered by the colour-bar menu in the page.
     """
 
     title: str | None = None
@@ -331,4 +368,5 @@ class Scene:
             "colorbars": [c.to_json() for c in self.colorbars],
             "bounds": None if self.bounds is None else np.asarray(self.bounds, dtype=float).tolist(),
             "theme": self.theme,
+            "colorscales": {name: colorscale_stops(name) for name in COLORSCALES},
         }
