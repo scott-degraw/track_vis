@@ -102,6 +102,25 @@ Python without knowing JavaScript.
 | `voxels.py`, `colors.py`, `io.py` | Grids, colour scales, ntuple reading. |
 | `js/` | The JavaScript renderer and vendored three.js; see `js/README.md`. |
 
+## Tutorial
+
+`examples/tutorial.ipynb` is an interactive walk-through of the whole API on small
+synthetic data, so it runs anywhere: points, lines, truth tracks and vertices, binned
+deposits, voxel images and their rendering controls, image and truth side by side,
+`DisplayMenu`, sizing and themes, Quarto slides, and saving pages. Every display in it
+is live (rotate, zoom, hover). Open it with:
+
+```bash
+uv sync --group dev
+uv run jupyter lab examples/tutorial.ipynb
+```
+
+or render it to one HTML page to read in a browser:
+
+```bash
+uv run jupyter nbconvert --to html --execute examples/tutorial.ipynb --output-dir /tmp
+```
+
 ## Example
 
 `examples/synthetic_event.ipynb` builds a fake event (electron, proton, and gamma

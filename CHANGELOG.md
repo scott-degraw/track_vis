@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- New interactive tutorial, `examples/tutorial.ipynb`, covering the whole API on
+  synthetic data, including sizing displays and putting them in Quarto slides.
+  A test runs its code so it keeps working.
+
 ## 0.2.2
 
 - The title and controls (sliders, checkboxes, reset view) now start hidden
