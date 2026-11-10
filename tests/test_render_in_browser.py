@@ -188,3 +188,26 @@ def test_renders_next_to_an_amd_loader(browser, tmp_path, tracks, lib):
     assert page_.locator(".track-vis").inner_text().startswith("track_vis:") is False
     assert errors == []
     page_.close()
+
+
+@pytest.mark.parametrize("scaling", ["transform", "zoom"])
+def test_sharp_when_the_page_scales_it(browser, tmp_path, tracks, scaling):
+    """reveal.js scales slides with a CSS transform or zoom; the canvas must match the on-screen size."""
+    path = tmp_path / "scaled.html"
+    wrapper = '<div id="slide" style="width:640px;transform-origin:0 0">{}</div>'
+    path.write_text(
+        page(wrapper.format(EventDisplay(width=640, height=360).add_tracks(**tracks).to_html(lib="inline")))
+    )
+
+    page_ = browser.new_page(viewport={"width": 1400, "height": 900})
+    page_.goto(path.as_uri())
+    page_.wait_for_function("document.querySelector('.track-vis')?._trackvis !== undefined", timeout=15000)
+    canvas_scale = (
+        "document.querySelector('.track-vis canvas').width / document.querySelector('.track-vis').clientWidth"
+    )
+    assert page_.evaluate(canvas_scale) == pytest.approx(1.0, abs=0.01)
+    # Like reveal.js: rescale the slide, then the window's resize event reaches the view.
+    rule = "transform = 'scale(1.5)'" if scaling == "transform" else "zoom = '1.5'"
+    page_.evaluate(f"document.getElementById('slide').style.{rule}; window.dispatchEvent(new Event('resize'))")
+    page_.wait_for_function(f"Math.abs({canvas_scale} - 1.5) < 0.01", timeout=5000)
+    page_.close()
