@@ -27,6 +27,9 @@ TRACK_VIS_REQUIRE_BROWSER=1 uv run pytest tests/test_render_in_browser.py
 # Write a gallery of synthetic event pages (light or dark) to look at the renderer
 uv run python examples/gallery.py /tmp/gallery --theme dark
 
+# Render the interactive tutorial to one HTML page (live 3D views)
+uv run jupyter nbconvert --to html --execute examples/tutorial.ipynb --output-dir /tmp
+
 # Run the example notebook end-to-end and write outputs in place
 uv run jupyter nbconvert --to notebook --execute --inplace examples/synthetic_event.ipynb
 
@@ -100,6 +103,9 @@ bounds to both.
 `particle_name(pdg)` degrades gracefully: it uses the optional `particle` package
 for PDG-to-name lookups if installed (`uv sync --extra particle`), otherwise
 falls back to `f"PDG {pdg}"`. Don't assume `particle` is present.
+
+`examples/tutorial.ipynb` is the user tutorial (synthetic data only; `tests/test_tutorial.py`
+runs its code cells). When changing the `EventDisplay` API, update it too.
 
 `examples/synthetic_event.ipynb` is the canonical worked example and doubles as
 a manual integration test: it builds a fake event with the columnar schema above,
