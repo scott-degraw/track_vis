@@ -167,6 +167,7 @@
   const HOVER_RADIUS_PX = 10;
   const HALO_PX = 3;  // extra width of the background-coloured outline behind lines
   const HALO_DEPTH = 0.03;  // how far behind its line the outline sits, in scene radii
+  const MAX_PIXEL_RATIO = 3;  // canvas pixels per CSS pixel: caps the ray-marching cost on scaled-up pages
 
   const STYLE = `
 .tv-root{--tv-ink:#1d2330;--tv-ink2:#5a6273;--tv-ink3:#8a92a2;--tv-border:#e2e5eb;--tv-bg1:#ffffff;--tv-bg2:#f2f4f7;
@@ -499,6 +500,7 @@
     const material = new THREE.ShaderMaterial({
       uniforms: {
         size: { value: pt.size * ctx.pixelRatio },
+        baseSize: { value: pt.size },
         dpr: { value: ctx.pixelRatio },
         rim: { value: new THREE.Vector3(...ctx.theme.rim) },
         edge: { value: new THREE.Vector3(...ctx.theme.edge) },
@@ -508,6 +510,7 @@
       transparent: true,  // anti-aliased edge; drawn before the volumes (renderOrder)
     });
     const points = new THREE.Points(geometry, material);
+    ctx.pointMaterials.push(material);
     ctx.themed.push((t) => { material.uniforms.rim.value.set(...t.rim); material.uniforms.edge.value.set(...t.edge); });
     ctx.scene.add(points);
     expandByPositions(ctx.bounds, pos);
@@ -965,11 +968,9 @@
     if (menuBar && menuBar.classList.contains("tv-menu")) menuBar.dataset.theme = themeName;
     root.style.cssText += `width:100%;max-width:${spec.width}px;height:${spec.height}px;`;
 
-    const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
     // A transparent canvas over the CSS background gradient; the volumes write
     // premultiplied colour, which is what the page compositor expects.
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    renderer.setPixelRatio(pixelRatio);
     renderer.setClearColor(0x000000, 0);
     renderer.domElement.style.display = "block";
     renderer.domElement.setAttribute("role", "img");
@@ -983,13 +984,15 @@
 
     const style = spec.volume_style;
     const ctx = {
-      root, spec, renderer, camera, pixelRatio,
+      root, spec, renderer, camera,
+      pixelRatio: Math.min(window.devicePixelRatio || 1, 2),  // updated by resize
       theme: THEMES[themeName],
       scene: new THREE.Scene(),
       bounds: new THREE.Box3(),
       layers: [],
       volumes: [],
       lineMaterials: [],
+      pointMaterials: [],  // marker sizes are in canvas pixels, so follow the pixel ratio
       halos: [],
       themed: [],  // functions that recolour WebGL objects for a theme
       styleUniforms: {
@@ -1042,6 +1045,16 @@
     function resize() {
       const w = root.clientWidth, h = root.clientHeight;
       if (!w || !h) return;  // hidden, e.g. in an inactive tab
+      // Draw at the size the view takes on screen. A page that scales its content
+      // with a CSS transform or zoom (reveal.js slides) would otherwise stretch a
+      // canvas sized in layout pixels, and blur it.
+      const cssScale = root.getBoundingClientRect().width / root.offsetWidth || 1;
+      ctx.pixelRatio = Math.min(Math.min(window.devicePixelRatio || 1, 2) * cssScale, MAX_PIXEL_RATIO);
+      renderer.setPixelRatio(ctx.pixelRatio);
+      for (const m of ctx.pointMaterials) {
+        m.uniforms.size.value = m.uniforms.baseSize.value * ctx.pixelRatio;
+        m.uniforms.dpr.value = ctx.pixelRatio;
+      }
       renderer.setSize(w, h);
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
@@ -1075,9 +1088,13 @@
     controls.addEventListener("change", () => { hideHover(); ctx.draw(); });
     const resizeObserver = new ResizeObserver(() => { resize(); ctx.draw(); });
     resizeObserver.observe(root);
+    // A page rescaling its content on window resize leaves root's layout size alone.
+    const onWindowResize = () => requestAnimationFrame(() => { resize(); ctx.draw(); });
+    window.addEventListener("resize", onWindowResize);
     // Free the GPU context and empty root, so another scene can be drawn there.
     ctx.dispose = () => {
       resizeObserver.disconnect();
+      window.removeEventListener("resize", onWindowResize);
       controls.dispose();
       ctx.scene.traverse((o) => { o.geometry?.dispose(); o.material?.dispose(); });
       ctx.volumes.forEach((v) => v.tex.dispose());

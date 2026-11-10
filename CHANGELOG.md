@@ -6,6 +6,13 @@
   synthetic data, including sizing displays and putting them in Quarto slides.
   A test runs its code so it keeps working.
 
+## 0.3.1
+
+- Fix: views were blurry on pages that scale their content, such as reveal.js
+  slides on a screen bigger than the deck size. The canvas now draws at the
+  size the view takes on screen (up to 3 canvas pixels per CSS pixel), and
+  follows the page when it rescales on a window resize.
+
 ## 0.2.2
 
 - The title and controls (sliders, checkboxes, reset view) now start hidden
